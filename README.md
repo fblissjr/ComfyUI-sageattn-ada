@@ -99,10 +99,57 @@ Inputs:
 If a sage call raises at runtime, the node logs once and falls back to
 ComfyUI's attention for the rest of the run. The render continues.
 
+Longer clips are the better case, not the worse one. At length 124 the
+speedup is 1.91x versus 1.70x at length 73, because attention is
+quadratic in sequence length while everything else is not. Per-call
+accuracy is flat across that range, so nothing is traded for it.
+
+## Stacking with other attention patches
+
+The node registers **two** things: a replacement `forward` on each of the
+50 DiT attention modules, and an `optimized_attention_override`.
+
+The forward patch is the fast path and handles every call on its own. The
+override exists for patches that run ComfyUI's *stock* forward in order
+to reach their own override — Kijai's
+[Sol-Attn](https://github.com/kijai/ComfyUI-SolAttn_triton) works this
+way. Without an override of ours registered, everything Sol-Attn declines
+after that point (a mask, its kernel returning `None`, a kernel error)
+would land on ComfyUI's default attention instead of sage. Ours chains
+onto any override already present and stays in place for a later one to
+chain onto, so layering is order-independent in that direction.
+
+**Apply this node before Sol-Attn**, so Sol-Attn sees it and composes:
+
+```
+UNETLoader → MiniMax H3 SageAttention → SolAttnPatch → BasicGuider
+```
+
+Worth understanding: the two do not stack per-call, they **alternate**.
+Inside Sol-Attn's sigma window it runs sparse and sage is bypassed;
+outside it, sage runs dense. At H3's defaults that is 14 of 20 steps
+sparse.
+
+Do **not** also enable KJNodes' *MiniMax H3 Mem Eff Sage Attention
+Patch* — it patches the same keys, so whichever node runs last silently
+wins and you will not know which kernel is running.
+
 ## Layout
 
 ```
-attention.py   kernel selection + the replacement Attention.forward
+attention.py   kernel selection, the replacement Attention.forward,
+               and the optimized_attention_override
 nodes.py       the ComfyUI node
-bench/         A/B bench and correctness check (run one arm per process)
+bench/
+  bench_minimax_attn.py      per-module speed + peak VRAM
+  bench_e2e_h3.py            full render A/B against a running ComfyUI,
+                             selectable arms via --arms
+  check_correctness.py       patched forward vs the stock one
+  check_override_routing.py  which calls the override sends to sage
+                             (no CUDA needed)
 ```
+
+Run bench arms one per process — peak VRAM is biased by a prior arm
+training the caching allocator, and `bench_e2e_h3.py` varies the seed per
+iteration because ComfyUI serves an identical graph from cache and would
+otherwise report an enormous fake speedup for a render that never ran.

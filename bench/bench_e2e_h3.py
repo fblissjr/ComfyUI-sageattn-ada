@@ -157,6 +157,15 @@ ARMS = {
     # it exists to prove SolAttn engaged at all, since a failed compose
     # degrades to dense silently and reads as "sparsity did not help".
     "sage+sol+verbose": (True, {"verbose": True}),
+    # Morton is close to free and measured best of the defaults, so the
+    # tuned arms build on it rather than on bare sol.
+    "sage+sol+morton+int8qk": (True, {"morton": True, "int8_qk": True}),
+    # H3's audio is ~250-400 rows inside a ~38k packed sequence -- thin
+    # enough for a block-sparse router to drop. exact_kv_and_rows runs
+    # those query rows dense so the generated audio stream stays exact,
+    # at ~20% cost by its own tooltip. The knob behind "it helps audio".
+    "sage+sol+morton+audio": (True, {"morton": True,
+                                     "sink_conditioning": "exact_kv_and_rows"}),
 }
 
 
