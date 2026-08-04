@@ -43,9 +43,12 @@ class MiniMaxH3SageAttention(io.ComfyNode):
                     tooltip=(
                         "Which kernel to run. 'auto' lets SageAttention pick "
                         "and is right on every supported card -- on a 4090 it "
-                        "resolves to fp8++. The explicit entries are for "
-                        "bisecting a suspected accuracy problem: fp16 is the "
-                        "most accurate and the slowest."
+                        "resolves to fp8++, so picking that explicitly changes "
+                        "nothing. The explicit entries are for bisecting a "
+                        "suspected accuracy problem. 'fp16' is the most "
+                        "accurate and the slowest, and is the one mode that "
+                        "gives up the per-call memory saving, because there is "
+                        "no consuming entry point for that kernel."
                     ),
                 ),
                 io.Boolean.Input(

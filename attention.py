@@ -65,10 +65,18 @@ def _sage():
 # own dispatcher pick, which is correct on every card we support; the
 # explicit entries exist so a suspected accuracy problem can be bisected
 # without editing code.
+#
+# A `None` attribute means "go through sageattn_consume", which releases
+# the float q/k/v as soon as they are quantized. sageattn_consume applies
+# its pv_accum_dtype with setdefault, so naming one here overrides the
+# dispatcher's pick without giving up that release -- which matters,
+# because on Ada "auto" already resolves to fp8++ and a user picking it
+# explicitly would otherwise silently lose ~435 MiB per call for nothing.
+# Only the fp16 kernel has no consuming entry point.
 MODES = {
     "auto": (None, {}),
-    "fp8++ (fastest)": ("sageattn_qk_int8_pv_fp8_cuda", {"pv_accum_dtype": "fp32+fp16"}),
-    "fp8": ("sageattn_qk_int8_pv_fp8_cuda", {"pv_accum_dtype": "fp32+fp32"}),
+    "fp8++ (fastest)": (None, {"pv_accum_dtype": "fp32+fp16"}),
+    "fp8": (None, {"pv_accum_dtype": "fp32+fp32"}),
     "fp16 (most accurate)": ("sageattn_qk_int8_pv_fp16_cuda", {"pv_accum_dtype": "fp32"}),
 }
 
@@ -97,14 +105,18 @@ def build_kernel(mode):
     if attr is None:
         return sa.sageattn_consume, base_kwargs
 
+    # No consuming entry point for this kernel: unpacking the list binds
+    # q/k/v into this frame for the duration of the call, so the tensors
+    # stay alive and the memory saving is lost. Correct, just heavier --
+    # acceptable for a diagnostic mode, and called out in the tooltip.
     kernel = getattr(sa, attr)
 
-    def consume_specific(qkv, **kw):
+    def call_without_release(qkv, **kw):
         q, k, v = qkv
         qkv.clear()
         return kernel(q, k, v, **kw)
 
-    return consume_specific, base_kwargs
+    return call_without_release, base_kwargs
 
 
 def make_minimax_attn_forward(kernel_fn, kernel_kwargs):

@@ -86,9 +86,12 @@ Inputs:
 - **model** — an H3 model. The node refuses anything else rather than
   silently doing nothing.
 - **mode** (default `auto`) — `auto` lets SageAttention's dispatcher
-  choose, which resolves to fp8++ on a 4090. The explicit modes exist for
-  bisecting a suspected accuracy problem; `fp16 (most accurate)` is the
-  slowest and least lossy.
+  choose, which resolves to fp8++ on a 4090, so picking `fp8++` explicitly
+  changes nothing. The explicit modes exist for bisecting a suspected
+  accuracy problem. `fp16 (most accurate)` is the slowest and least lossy
+  (mean relative error 0.010 vs 0.069 for the fp8 modes), and is the one
+  mode that gives up the per-call memory saving — there is no consuming
+  entry point for that kernel.
 - **patch_token_refiner** (default off) — also patches the 2 text
   token-refiner blocks. They run over the text span only (~2k rows vs
   ~42k), so this is worth well under 1% of attention time.
