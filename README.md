@@ -40,11 +40,30 @@ against the stock forward, on both the eager norm path and the fused
 RMSNorm+RoPE path. SageAttention quantizes Q/K to INT8 and V to FP8, so
 some divergence is by design; this sits at the kernel's known level.
 
-**Not yet measured: what this does to a full render.** These are
-single-module numbers. A 21 GB checkpoint on a 24 GB card spends real time
-streaming weights, and time saved in attention does not necessarily show
-up as wall-clock. Treat the table above as a kernel result, not a promised
-speedup, until you have run your own before/after on a real workflow.
+### On a real render
+
+The above is one module in isolation. This is a full render through a
+running ComfyUI at the bundled i2v template's settings — 1344x768,
+length 73, 20 steps, `res_multistep`/`simple`, `int8_convrot` weights —
+warmup discarded, arms alternating, two paired runs. Reproduce with
+`bench/bench_e2e_h3.py`:
+
+| | sampler | total render |
+|---|---|---|
+| sage off | 141.2 s | 151.9 s |
+| sage on | 82.9 s | 93.6 s |
+| | **1.70x** | **1.62x** |
+
+The two paired runs agreed to within 0.3 s on every figure. The gap
+between the columns is text encode plus VAE decode, which attention
+cannot touch; the sampler is 93% of total at these settings, so that gap
+is small. Expect a smaller end-to-end ratio at short durations, where the
+packed sequence is short enough that attention stops dominating — at
+length 5 the same A/B measures 1.02x, i.e. nothing.
+
+Peak VRAM during the render was ~20.6 GB of 24 GB, so this fits with room
+to spare on a 4090 here. Longer durations or higher resolutions will
+close that margin.
 
 ## Requirements
 
