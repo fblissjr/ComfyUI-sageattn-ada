@@ -2,6 +2,8 @@
 
 SageAttention kernels for consumer video DiTs on Ada (RTX 40xx / sm89).
 
+Optimized for this sage fork code: [`https://github.com/fblissjr/SageAttention-ada/`](https://github.com/fblissjr/SageAttention-ada/):
+
 One node today: **MiniMax H3 SageAttention**.
 
 ## What it does
