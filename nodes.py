@@ -10,7 +10,13 @@ import logging
 
 from comfy_api.latest import ComfyExtension, io
 
-from .attention import MODES, build_kernel, make_minimax_attn_forward, reset_fallback_state
+from .attention import (
+    MODES,
+    build_kernel,
+    make_minimax_attn_forward,
+    make_sage_override,
+    reset_fallback_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +98,28 @@ class MiniMaxH3SageAttention(io.ComfyNode):
                 f"{path}.attn.forward", forward.__get__(attn, attn.__class__)
             )
 
+        # Also register an optimized_attention_override. The forward patch
+        # above handles every call on its own, so this never fires when our
+        # node runs alone. It matters when another patch (Sol-Attn) runs
+        # ComfyUI's stock forward to reach its own override: anything that
+        # override declines would otherwise land on ComfyUI's default
+        # attention instead of sage. Chained onto whatever was already
+        # there, and left in place for a later patch to chain onto in turn.
+        # Copy before mutating: clone() shallow-copies model_options, so the
+        # transformer_options dict can still be shared with the source model.
+        # Writing through it would install sage on a model the user did not
+        # patch -- which, in an A/B, silently contaminates the control arm.
+        to = m.model_options["transformer_options"] = \
+            m.model_options.get("transformer_options", {}).copy()
+        to["optimized_attention_override"] = make_sage_override(
+            kernel_fn, kernel_kwargs,
+            previous=to.get("optimized_attention_override"),
+        )
+
         logger.info(
             "[sageattn-ada] MiniMax H3 self-attention on sage (mode=%s, "
-            "%d attention modules patched)", mode, len(targets),
+            "%d attention modules patched, sage registered as the "
+            "attention-override fallback)", mode, len(targets),
         )
         return io.NodeOutput(m)
 

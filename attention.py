@@ -22,7 +22,10 @@ running in place on the qkv buffer.
 
 from __future__ import annotations
 
+import functools
 import logging
+
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +120,72 @@ def build_kernel(mode):
         return kernel(q, k, v, **kw)
 
     return call_without_release, base_kwargs
+
+
+def make_sage_override(kernel_fn, kernel_kwargs, previous=None):
+    """An `optimized_attention_override` that routes eligible calls to sage.
+
+    The forward patch below is the fast path and handles everything on its
+    own -- it calls sage directly and never reaches `optimized_attention`.
+    This exists for the case where another patch runs ComfyUI's *stock*
+    forward instead of ours, which is how Sol-Attn takes a call: its
+    compose gate hands eligible calls to the stock forward so they reach
+    its own override.
+
+    Without an override of ours in place, every path Sol-Attn declines
+    *after* that point -- a mask, its kernel returning None, or a kernel
+    error -- falls through to ComfyUI's default attention rather than back
+    to sage. Installing this makes sage the fallback instead, which is
+    what Sol-Attn's own `previous` chaining is for.
+
+    `previous` preserves any override already on the model, so this
+    composes rather than clobbers.
+    """
+
+    def override(func, q, k, v, heads, mask=None, attn_precision=None,
+                 skip_reshape=False, skip_output_reshape=False, **kwargs):
+        def fallback():
+            target = func if previous is None else functools.partial(previous, func)
+            return target(q, k, v, heads, mask=mask, attn_precision=attn_precision,
+                          skip_reshape=skip_reshape,
+                          skip_output_reshape=skip_output_reshape, **kwargs)
+
+        # Sage has no mask support on this path, and a custom softmax scale
+        # is not plumbed through here. Both are rare on H3 (its self-attn
+        # passes neither) but wrong silently if assumed.
+        if mask is not None or kwargs.get("scale") is not None:
+            return fallback()
+
+        if skip_reshape:
+            b, _, _, dim_head = q.shape
+            layout = "HND"
+        else:
+            b, _, dim = q.shape
+            dim_head = dim // heads
+            q, k, v = (t.view(b, -1, heads, dim_head) for t in (q, k, v))
+            layout = "NHD"
+        if q.dtype not in (torch.bfloat16, torch.float16) or dim_head > 128:
+            return fallback()
+
+        # Deliberately does NOT hand ownership to the kernel here. Dropping
+        # q/k/v would free them earlier, but `fallback` closes over those
+        # names, so releasing them turns a kernel failure into a NameError
+        # instead of a graceful degrade. This path only runs when another
+        # patch is driving; a working fallback is worth more here than the
+        # per-call saving, which the forward patch still gets.
+        try:
+            out = kernel_fn([q, k, v], **dict(kernel_kwargs, tensor_layout=layout))
+        except Exception as exc:
+            _log_fallback_once(exc)
+            return fallback()
+
+        if layout == "HND":
+            return out if skip_output_reshape else \
+                out.transpose(1, 2).reshape(b, -1, heads * dim_head)
+        return out.transpose(1, 2) if skip_output_reshape else \
+            out.reshape(b, -1, heads * dim_head)
+
+    return override
 
 
 def make_minimax_attn_forward(kernel_fn, kernel_kwargs):

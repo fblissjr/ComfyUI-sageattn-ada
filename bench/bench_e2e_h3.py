@@ -80,9 +80,15 @@ PROMPT = (
 )
 
 
-def build_prompt(cfg, *, sage, seed):
-    """API-format graph. `sage` inserts the node between UNETLoader and
-    the two MODEL consumers; otherwise they read the loader directly."""
+def build_prompt(cfg, *, sage, seed, sol=None):
+    """API-format graph.
+
+    `sage` inserts our node between UNETLoader and the two MODEL consumers.
+    `sol`, when given a dict of SolAttnPatch settings, chains SolAttn after
+    it -- that order matters: SolAttn walks the model's existing object
+    patches and composes with the attention forwards it finds, so it has to
+    run second to see ours. Reversed, ours would overwrite its patch.
+    """
     g = {
         "1": {"class_type": "UNETLoader",
               "inputs": {"unet_name": cfg["unet"], "weight_dtype": "default"}},
@@ -112,16 +118,46 @@ def build_prompt(cfg, *, sage, seed):
                "inputs": {"video": ["13", 0], "filename_prefix": "video/h3_sage_ab",
                           "format": "auto", "codec": "auto"}},
     }
+    model_src = ["1", 0]
     if sage:
         g["20"] = {"class_type": "MiniMaxH3SageAttention",
-                   "inputs": {"model": ["1", 0], "mode": "auto",
+                   "inputs": {"model": model_src, "mode": "auto",
                               "patch_token_refiner": False}}
         model_src = ["20", 0]
-    else:
-        model_src = ["1", 0]
+    if sol is not None:
+        g["21"] = {"class_type": "SolAttnPatch",
+                   "inputs": {"model": model_src, **SOL_DEFAULTS, **sol}}
+        model_src = ["21", 0]
     g["8"]["inputs"]["model"] = model_src
     g["9"]["inputs"]["model"] = model_src
     return g
+
+
+# SolAttnPatch's own defaults, restated so an arm only has to name what it
+# changes and the rest is pinned rather than drifting with the node.
+SOL_DEFAULTS = dict(
+    tau=1.2, start_percent=0.2, end_percent=0.9, min_tokens=4096,
+    int8_qk=False, sink_conditioning="exact_kv", morton=False,
+    morton_curve="3d", verbose=False,
+)
+
+# name -> (sage on?, SolAttn overrides or None)
+ARMS = {
+    "off":       (False, None),
+    "sage":      (True, None),
+    "sol":       (False, {}),
+    "sage+sol":  (True, {}),
+    "sage+sol+morton": (True, {"morton": True}),
+    # int8_qk puts SolAttn's exact branch on INT8 QK instead of fp16, which
+    # its own tooltip says helps at tau<=1.5 -- we run tau=1.2. Without it
+    # the stacked arms are not purely additive: sage quantizes, SolAttn's
+    # kept blocks do not.
+    "sage+sol+int8qk": (True, {"int8_qk": True}),
+    # verbose logs each sparse/dense routing decision. Not a timing arm --
+    # it exists to prove SolAttn engaged at all, since a failed compose
+    # degrades to dense silently and reads as "sparsity did not help".
+    "sage+sol+verbose": (True, {"verbose": True}),
+}
 
 
 def http_post(url, obj, timeout=60):
@@ -185,6 +221,9 @@ def main():
     ap.add_argument("--length", type=int, default=DEFAULTS["length"])
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--timeout", type=float, default=1800.0)
+    ap.add_argument("--arms", default="off,sage",
+                    help="comma-separated arms, first is the baseline. "
+                         "Known: off, sage, sol, sage+sol, sage+sol+morton")
     ap.add_argument("--skip-warmup", action="store_true",
                     help="Only if a comparable render already ran this session. "
                          "A cold first run pays model load and Triton autotune and "
@@ -208,23 +247,33 @@ def main():
     def seed_for(i):
         return args.seed + i
 
+    arms = [a.strip() for a in args.arms.split(",") if a.strip()]
+    unknown = [a for a in arms if a not in ARMS]
+    if unknown:
+        print(f"unknown arm(s) {unknown}; known: {list(ARMS)}")
+        return 1
+
+    def graph_for(arm, seed):
+        use_sage, sol = ARMS[arm]
+        return build_prompt(cfg, sage=use_sage, seed=seed, sol=sol)
+
     if not args.skip_warmup:
         print("warmup (discarded: model load + Triton autotune + text encode) ...", flush=True)
         total, _, err = asyncio.run(run_once(
-            args.host, build_prompt(cfg, sage=True, seed=seed_for(0)), client_id, args.timeout))
+            args.host, graph_for(arms[0], seed_for(0)), client_id, args.timeout))
         if err:
             print(f"  warmup FAILED: {err}")
             return 1
         print(f"  {total:.1f}s\n")
 
-    results = {"sage": [], "off": []}
-    sampler = {"sage": [], "off": []}
+    results = {a: [] for a in arms}
+    sampler = {a: [] for a in arms}
+    width = max(len(a) for a in arms)
     for i in range(args.runs):
         seed = seed_for(i + 1)
-        for arm, use_sage in (("sage", True), ("off", False)):
+        for arm in arms:
             total, per_node, err = asyncio.run(run_once(
-                args.host, build_prompt(cfg, sage=use_sage, seed=seed),
-                client_id, args.timeout))
+                args.host, graph_for(arm, seed), client_id, args.timeout))
             if err:
                 print(f"  run {i+1} {arm}: FAILED: {err}")
                 return 1
@@ -236,19 +285,19 @@ def main():
                 return 1
             results[arm].append(total)
             sampler[arm].append(s)
-            print(f"  run {i+1} {arm:4s}  seed={seed}  total {total:7.1f}s   "
+            print(f"  run {i+1} {arm:{width}s}  seed={seed}  total {total:7.1f}s   "
                   f"sampler {s:7.1f}s", flush=True)
 
     print()
-    def med(xs):
-        return statistics.median(xs)
-    s_on, s_off = med(sampler["sage"]), med(sampler["off"])
-    t_on, t_off = med(results["sage"]), med(results["off"])
-    print(f"{'':10s} {'sampler':>12s} {'total':>12s}")
-    print(f"{'sage off':10s} {s_off:11.1f}s {t_off:11.1f}s")
-    print(f"{'sage on':10s} {s_on:11.1f}s {t_on:11.1f}s")
-    print(f"{'speedup':10s} {s_off/s_on:11.2f}x {t_off/t_on:11.2f}x")
-    print(f"\nsampler share of total, sage off: {100*s_off/t_off:.0f}%  "
+    med = statistics.median
+    base = arms[0]
+    b_s, b_t = med(sampler[base]), med(results[base])
+    print(f"{'arm':{width}s} {'sampler':>11s} {'total':>11s} "
+          f"{'vs ' + base:>12s}")
+    for arm in arms:
+        s, t = med(sampler[arm]), med(results[arm])
+        print(f"{arm:{width}s} {s:10.1f}s {t:10.1f}s {b_s/s:11.2f}x")
+    print(f"\nsampler share of total on {base}: {100*b_s/b_t:.0f}%  "
           f"-- the ceiling on what any attention work can move")
     return 0
 
