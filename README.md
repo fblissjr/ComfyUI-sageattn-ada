@@ -71,9 +71,11 @@ close that margin.
   SageAttention's dispatcher picks for them and are untested here.
 - CUDA 12.8 or newer.
 - A ComfyUI recent enough to have `comfy.ldm.minimax`.
-- The Ada SageAttention fork, built from source, new enough to provide
-  `sageattn_consume`. A stock `pip install sageattention` will not work —
-  the node checks and tells you so.
+- [SageAttention-ada](https://github.com/fblissjr/SageAttention-ada), built from
+  source, new enough to provide `sageattn_consume` (v0.7.0+ — see its
+  [CHANGELOG](https://github.com/fblissjr/SageAttention-ada/blob/main/CHANGELOG.md)).
+  A stock `pip install sageattention` will not work — the node checks and tells
+  you so.
 
 ## Use
 
@@ -133,6 +135,12 @@ sparse.
 Do **not** also enable KJNodes' *MiniMax H3 Mem Eff Sage Attention
 Patch* — it patches the same keys, so whichever node runs last silently
 wins and you will not know which kernel is running.
+
+Measurements, settings worth using, and what did not hold up:
+**[Experiments on sage + Sol-Attn](SOLATTN.md)**. Short version — about 1.15x on
+top of sage with `int8_qk=True` and `morton=False`, no quality difference that
+survived replication, and Sol-Attn renders measure consistently louder on audio
+for reasons not yet established.
 
 ## Layout
 

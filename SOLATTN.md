@@ -8,6 +8,12 @@ question is whether they compose usefully. They do, modestly.
 Everything below is a single-machine, single-workload result. Sol-Attn is
 tuned for more than H3 and the numbers here say nothing about it elsewhere.
 
+The sage baseline is [SageAttention-ada](https://github.com/fblissjr/SageAttention-ada),
+not stock SageAttention -- its
+[CHANGELOG](https://github.com/fblissjr/SageAttention-ada/blob/main/CHANGELOG.md)
+lists what differs. It has not been measured against stock, so these ratios
+mean "on this fork, this model, this box".
+
 ## The frontier
 
 Sampler time, same seed, warmup discarded, arms alternating:
@@ -16,14 +22,74 @@ Sampler time, same seed, warmup discarded, arms alternating:
 |---|---|---|---|---|
 | no sage | 342.1 s | 1.00x | — | reference |
 | **sage** | **178.7 s** | **1.91x** | 1.00x | indistinguishable by eye |
-| sage + sol (`int8_qk`) | 160.6 s | **2.13x** | 1.11x | different, not worse |
+| sage + sol (`int8_qk`) | 155.0 s | **2.21x** | 1.15x | no difference held up |
 | sage + sol, widened window | ~150 s (projected) | ~2.3x | ~1.2x | unmeasured, expect degradation |
 
 **Sage is the easy call**: a large win with no perceptual cost and one
-node. **Sol-Attn is a judgement call**: another 11% for a second node, a
-sigma window to tune, and a sample that is visibly different (not worse)
-from the same seed. Below about 20k packed rows it will do less, because
+node. **Sol-Attn is a judgement call**: another 15% for a second node, a
+sigma window to tune, and a sample that differs from the same seed without
+being better. Below about 20k packed rows it will do less, because
 attention stops dominating.
+
+## Quality
+
+Treat Sol-Attn as a speed knob. No quality difference held up.
+
+| seed | arm | blind | verdict |
+|---|---|---|---|
+| 801 | sol+morton+int8qk | no | Sol-Attn better |
+| 701 | plain sol | yes | different, neither better |
+| 702 | plain sol | yes | nearly identical |
+| 1001 | sol+morton+int8qk | no | same |
+
+One positive in four, and it was the first pair looked at -- before there was
+any sense of how much these samples vary seed to seed. A later pair on the same
+arm at a different seed came back "same", unblinded, so an expectation effect
+had its chance and did not appear.
+
+Limits of this, which are severe:
+
+- One observer, one prompt, four pairs.
+- Three of the four judgments came late in a long session. Fatigue pushes
+  toward "these look the same", which is the direction the nulls point, so
+  "no difference" and "stopped discriminating" are not separable here.
+- The prompt is slow-camera, diffuse fog, ambient audio. A block-sparse artifact
+  would more likely surface in fast motion, fine repeated detail, or on-screen
+  text -- none of which this scene has.
+
+For scale on the noise floor: the same observer called one plain-sage render
+"dramatically more interesting" than two others differing only by seed.
+
+The renders are kept, so re-judging cold is the cheap way to firm this up.
+
+**Measured: Sol-Attn renders are consistently louder.** Noticed by ear, then
+confirmed with `ffmpeg -af volumedetect` across all three same-seed pairs:
+
+| pair | seed | mean dB (sage -> sol) | peak dB (sage -> sol) |
+|---|---|---|---|
+| 00031/00032 | 1001 | -40.2 -> -39.6 (+0.6) | -25.6 -> -24.6 (+1.0) |
+| 00033/00034 | 1002 | -39.6 -> -38.9 (+0.7) | -24.8 -> -23.5 (+1.3) |
+| 00035/00036 | 1003 | -36.9 -> -35.2 (+1.7) | -20.8 -> -14.8 (+6.0) |
+
+Louder in 3 of 3, on both mean and peak. This does not mean *better* -- it means
+Sol-Attn measurably changes the audio path, which nothing else in this session
+established.
+
+Plausible mechanism, untested: attention output is a weighted average, and
+sparse attention drops low-weight blocks then renormalizes over what remains, so
+the result leans harder on the strongest matches. Less averaging reads as more
+dynamic range. The +6.0 dB peak against a +1.7 dB mean has that shape --
+transients sharpening rather than everything rising uniformly. If that is what
+is happening, "sounds better" and "is less faithful" would both be true at once:
+punchier is more pleasing and less accurate.
+
+Two things remain open and point opposite ways. H3's audio is ~250-400 rows in a
+~38k sequence and Sol-Attn reports `dense query blocks (0, 0)` -- no query rows
+dense -- so sparsity should *hurt* audio; yet forcing those rows dense
+(`exact_kv_and_rows`) also sounded better. Both cannot be right.
+
+What was never checked: accuracy against the sage output rather than loudness.
+The files exist, so that is a listening test, not a render.
 
 ## Where the time actually goes
 
@@ -49,7 +115,7 @@ The end-to-end result is small because of Amdahl applied twice: attention
 is only ~46% of a forward, and only 14 of 20 steps fall inside Sol-Attn's
 default sigma window. All 20 steps sparse would give ~1.22x on the
 sampler; the window alone accounts for roughly half the gap between that
-and the 1.11x measured.
+and the 1.15x measured.
 
 ## Configuration findings
 
