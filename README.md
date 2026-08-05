@@ -101,10 +101,40 @@ Inputs:
 If a sage call raises at runtime, the node logs once and falls back to
 ComfyUI's attention for the rest of the run. The render continues.
 
-Longer clips are the better case, not the worse one. At length 124 the
-speedup is 1.91x versus 1.70x at length 73, because attention is
-quadratic in sequence length while everything else is not. Per-call
-accuracy is flat across that range, so nothing is traded for it.
+### Longer clips are the better case
+
+Not the worse one. Attention grows as S^2 while everything else in the
+block grows as S, so the longer the clip, the larger the share of the step
+sage is attacking. At length 73 the sampler speedup is 1.70x; at 124 it is
+1.91x.
+
+Measured per-call at the 1344x768 canvas, sage `fp8++` against torch's
+flash backend, with q/k/v as the three views of one fused QKV buffer that a
+DiT block actually produces:
+
+| frames | packed rows S | sage | flash | ratio | attention share of step |
+|---|---|---|---|---|---|
+| 124 | 37,774 | 90.1 ms | 253.5 ms | 2.81x | ~50% |
+| 209 | 63,256 | 256.0 ms | 708.2 ms | 2.77x | — |
+| 311 | 93,836 | 556.5 ms | 1560.3 ms | 2.80x | — |
+| 362 | 109,126 | 757.7 ms | 2107.9 ms | 2.78x | ~76% |
+
+The kernel ratio is flat — 2.77-2.81x across a 2.9x span of sequence
+length — and per-call accuracy is flat with it (mean rtol 0.0978-0.0985),
+so nothing is traded for the extra length.
+
+What changes is leverage, not the multiplier. A 362-frame render logs
+49.66 s/it at 20 steps; 50 blocks times the 757.7 ms above is 37.9 s of
+that, so three quarters of the clock is attention. The same step on flash
+would be about 118 s/it — 39.5 min against 16.6 min for the render.
+
+**Past 328 frames the addressing changes underneath you**, and it is worth
+knowing why that is safe here. Above S=99,864 rows the element offsets in
+the fused-QKV layout exceed int32, which in this layout silently zeroes the
+tail of the output rather than raising. SageAttention-ada v0.7.0 fixed this
+with a per-launch int64 specialization; v0.7.1 verified it at 362 frames,
+where it engages and costs 0.07% — inside noise. Stock SageAttention still
+has the defect. If you run long clips, this fork is not optional.
 
 ## Stacking with other attention patches
 

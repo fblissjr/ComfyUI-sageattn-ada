@@ -31,6 +31,55 @@ sigma window to tune, and a sample that differs from the same seed without
 being better. Below about 20k packed rows it will do less, because
 attention stops dominating.
 
+### The 15% is a floor, and the length it was measured at is why
+
+This table is length 124, where attention is ~50% of the step. Sol-Attn
+only attacks attention, so its ceiling is that share — and the share climbs
+with sequence length, because attention is quadratic in S and the rest of
+the block is linear:
+
+| frames | packed rows S | attention share of step |
+|---|---|---|
+| 124 | 37,774 | ~50% |
+| 362 | 109,126 | ~76% |
+
+Backing the 1.15x out through Amdahl at a 50% share implies Sol-Attn made
+attention itself about 1.35x faster. Holding that kernel ratio and
+re-applying it at a 76% share projects **~1.25x** at 362 frames, before any
+credit for longer sequences having more skippable blocks to find. On a
+16.6-minute render that is worth roughly three minutes.
+
+Projection, not measurement — the arithmetic assumes the same sparsity
+behaviour at 2.9x the length, which is exactly the assumption long
+sequences are most likely to break. It is the strongest available reason to
+re-run this evaluation at 362 frames rather than to trust the number.
+
+### Three Sol-Attn changes postdate this evaluation
+
+Measured Aug 4; Sol-Attn shipped these Aug 4-6, so nothing below is
+reflected in the table above.
+
+- **`int8_pv` (new, defaults on).** Runs the exact branch's P@V in INT8 as
+  well as QK. Upstream's note is that PV and QK cost the same, so this is
+  "the other half of the int8 win" — our 1.15x was `int8_qk` only.
+- **`SolAttnBlockProbe` + `dense_blocks`.** The probe computes every
+  attention call both sparse and dense and logs per-block relative error
+  worst-first; the worst blocks then go in `dense_blocks` to stay exact.
+  This is the direct instrument for the audio question left open below —
+  it answers per block which approximations actually reach the output,
+  instead of inferring it from listening.
+- **`morton_curve="2d_frame"` (new default).** Z-orders within each frame
+  and leaves frame order alone, motivated by H3's frame spacing being
+  non-uniform. Our evaluation ran morton off, and the failure mode it
+  addresses is length-dependent, so this is worth revisiting at 362 frames
+  specifically.
+
+Upstream also fixed an int32 overflow in Sol-Attn's own Triton kernels on
+Aug 4 (`9cab9a0`) and a Morton corruption at certain sizes (`e353f6d`).
+Both are in the size range long clips reach, so any long-sequence
+Sol-Attn measurement needs a build at or after those commits to mean
+anything.
+
 ## Quality
 
 Treat Sol-Attn as a speed knob. No quality difference held up.
