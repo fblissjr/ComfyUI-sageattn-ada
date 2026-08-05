@@ -135,10 +135,19 @@ def build_prompt(cfg, *, sage, seed, sol=None):
 
 # SolAttnPatch's own defaults, restated so an arm only has to name what it
 # changes and the rest is pinned rather than drifting with the node.
+#
+# Pinning is load-bearing and nearly failed here: SolAttn changed three of
+# these underneath us. `int8_qk` and `int8_pv` now default on upstream and
+# `morton_curve` now defaults to "2d_frame". Any knob missing from this dict
+# silently takes the node's current default, so an arm named "sol" would
+# quietly have meant different things before and after that release, and the
+# ratios would not have been comparable across sessions. Values below are
+# the ones the 124-frame evaluation in SOLATTN.md ran on, so old and new
+# measurements stay on one baseline; arms opt into the new behaviour by name.
 SOL_DEFAULTS = dict(
     tau=1.2, start_percent=0.2, end_percent=0.9, min_tokens=4096,
-    int8_qk=False, sink_conditioning="exact_kv", morton=False,
-    morton_curve="3d", verbose=False,
+    int8_qk=False, int8_pv=False, sink_conditioning="exact_kv", morton=False,
+    morton_curve="3d", verbose=False, use_tma=False, dense_blocks="",
 )
 
 # name -> (sage on?, SolAttn overrides or None)
@@ -160,6 +169,22 @@ ARMS = {
     # Morton is close to free and measured best of the defaults, so the
     # tuned arms build on it rather than on bare sol.
     "sage+sol+morton+int8qk": (True, {"morton": True, "int8_qk": True}),
+    # int8_pv is the other half of the int8 win -- SolAttn's exact branch
+    # runs P@V in INT8 as well as QK, and upstream's note is that the two
+    # cost the same. It only applies when int8_qk is on, so the pair moves
+    # together. This is what upstream now ships on by default and what the
+    # 124-frame evaluation predates.
+    "sage+sol+int8": (True, {"int8_qk": True, "int8_pv": True}),
+    # 2d_frame Z-orders within each frame and leaves frame order alone.
+    # It became upstream's default because H3's frame spacing is not
+    # uniform, which is a length-dependent failure -- so this arm matters
+    # more at 362 frames (latent_t 107) than at the 124 frames (latent_t 37)
+    # the earlier evaluation ran, where morton measured neutral-to-slightly-good.
+    "sage+sol+morton2d": (True, {"morton": True, "morton_curve": "2d_frame"}),
+    # Everything upstream now defaults to, as one arm: the realistic
+    # "user drops in the current node and leaves it alone" configuration.
+    "sage+sol+current": (True, {"int8_qk": True, "int8_pv": True,
+                                "morton": True, "morton_curve": "2d_frame"}),
     # H3's audio is ~250-400 rows inside a ~38k packed sequence -- thin
     # enough for a block-sparse router to drop. exact_kv_and_rows runs
     # those query rows dense so the generated audio stream stays exact,
