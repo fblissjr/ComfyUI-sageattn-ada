@@ -63,6 +63,48 @@ DEFAULTS = dict(
     fps=24.0,
 )
 
+# Long-clip prompt, used when the request is long enough to need one.
+#
+# Two reasons this exists rather than stretching PROMPT. First, format: past
+# a few seconds MiniMax's guide wants the timeline carried by numbered shots
+# with explicit cut times and the three core fields, not one run-on
+# description -- a 15-second request against a 6-second prompt leaves the
+# model to invent twelve seconds of nothing, which is its own confound.
+#
+# Second, and the reason the content is what it is: SOLATTN.md flags that
+# the earlier quality comparison ran on slow camera moves and diffuse fog,
+# which is close to the worst case for *noticing* a block-sparse artifact.
+# A router that drops the wrong block shows up in fast motion, in fine
+# repeated detail, and in audio transients. So this deliberately carries
+# all three -- a whip pan, a brick facade and railings, rain texture, and
+# sharp percussive sound -- to give any degradation somewhere to be seen.
+# A prompt that hides artifacts makes the sparse arm look free when it
+# is not.
+PROMPT_LONG = (
+    "integrated_multimodal_description: [Shot 1] Live-action, cinematic, "
+    "handheld, shallow depth of field. A medium shot frames a courier in a "
+    "soaked red jacket standing over a bicycle at a city crosswalk in heavy "
+    "evening rain, wet asphalt throwing back the signal lights, a brick "
+    "facade with iron railings filling the background. The camera tracks "
+    "right at medium amplitude and moderate speed as she snaps her helmet "
+    "strap and pushes off.\n"
+    "[Shot 2] At 00:04.000, the shot cuts to a low tracking shot running "
+    "alongside the spinning front wheel, spokes flickering, spray coming off "
+    "the tyre, painted lane markings streaming past underneath.\n"
+    "[Shot 3] At 00:08.000, the camera whip pans up to a wide shot of the "
+    "street as she cuts between two parked cars, pigeons scattering off the "
+    "railings, neon shopfront signs reflected in the puddles.\n"
+    "[Shot 4] At 00:11.500, the shot changes to a close shot of her face "
+    "under the helmet, rain streaking across the lens, as she glances back "
+    "over her shoulder and then forward again, breathing hard.\n\n"
+    "overall_soundscape: steady heavy rain on asphalt and metal, tyre hiss "
+    "through standing water, the click and rattle of a bicycle chain, spokes "
+    "ticking, a car horn twice in the middle distance, wings clattering as "
+    "the pigeons take off, her breathing close and rhythmic under the "
+    "helmet.\n\n"
+    "non_diegetic_music: none."
+)
+
 # A prompt shaped the way MiniMax's own writing guide recommends:
 # style and composition first, then subject, scene, camera motion,
 # action, then soundscape.
@@ -78,6 +120,63 @@ PROMPT = (
     "gulls calling overhead.\n\n"
     "No dialogue, no text overlays, no cuts."
 )
+
+
+def _is_adhoc(name):
+    return name.endswith("]") and "[" in name
+
+
+def resolve_arm(name):
+    """(sage on?, SolAttn overrides) for a named arm or an ad-hoc spec.
+
+    Named arms in ARMS stay the vocabulary for anything worth repeating.
+    Ad-hoc specs exist because sweeping a continuous knob -- tau, the
+    sigma window -- would otherwise mean editing ARMS once per point and
+    re-committing, which is how a sweep ends up undocumented. Form:
+
+        sage+sol[tau=1.6]                 sage on, one override
+        sage+sol[tau=2.0,int8_qk=1]       several
+        sol[start_percent=0.1]            SolAttn without sage
+
+    Values are typed by SOL_DEFAULTS, so `int8_qk=1` becomes True and
+    `tau=1.6` a float. A key not in SOL_DEFAULTS is an error rather than
+    a silently-ignored typo -- a misspelled knob would otherwise read as
+    "this lever does nothing".
+    """
+    if not _is_adhoc(name):
+        return ARMS[name]
+    base, spec = name[:-1].split("[", 1)
+    overrides = {}
+    for pair in spec.split(","):
+        if not pair.strip():
+            continue
+        k, _, v = pair.partition("=")
+        k, v = k.strip(), v.strip()
+        if k not in SOL_DEFAULTS:
+            raise SystemExit(f"unknown SolAttn knob {k!r}; known: {sorted(SOL_DEFAULTS)}")
+        proto = SOL_DEFAULTS[k]
+        if isinstance(proto, bool):
+            overrides[k] = v.lower() in ("1", "true", "yes", "on")
+        elif isinstance(proto, int):
+            overrides[k] = int(v)
+        elif isinstance(proto, float):
+            overrides[k] = float(v)
+        else:
+            overrides[k] = v
+    return base.startswith("sage"), overrides
+
+
+def pick_prompt(cfg):
+    """PROMPT_LONG once the request is long enough to need a shot timeline.
+
+    The threshold is where PROMPT's single shot stops covering the runtime:
+    it describes one continuous ~6 s beat, so anything past roughly twice
+    that is asking the model to fill time the prompt never mentions. Cut
+    times in PROMPT_LONG run to 00:11.500, so it needs at least that much
+    clip to make sense.
+    """
+    seconds = cfg["length"] / cfg["fps"]
+    return PROMPT_LONG if seconds >= 12.0 else PROMPT
 
 
 def build_prompt(cfg, *, sage, seed, sol=None):
@@ -97,7 +196,8 @@ def build_prompt(cfg, *, sage, seed, sol=None):
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": cfg["video_vae"]}},
         "4": {"class_type": "VAELoader", "inputs": {"vae_name": cfg["audio_vae"]}},
         "5": {"class_type": "MiniMaxH3ImageToVideo",
-              "inputs": {"clip": ["2", 0], "vae": ["3", 0], "prompt": PROMPT,
+              "inputs": {"clip": ["2", 0], "vae": ["3", 0],
+                         "prompt": pick_prompt(cfg),
                          "width": cfg["width"], "height": cfg["height"],
                          "length": cfg["length"]}},
         "6": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
@@ -282,13 +382,14 @@ def main():
         return args.seed + i
 
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
-    unknown = [a for a in arms if a not in ARMS]
+    unknown = [a for a in arms if a not in ARMS and not _is_adhoc(a)]
     if unknown:
         print(f"unknown arm(s) {unknown}; known: {list(ARMS)}")
+        print("or ad-hoc: sage+sol[tau=1.6,int8_qk=1] / sol[start_percent=0.1]")
         return 1
 
     def graph_for(arm, seed):
-        use_sage, sol = ARMS[arm]
+        use_sage, sol = resolve_arm(arm)
         return build_prompt(cfg, sage=use_sage, seed=seed, sol=sol)
 
     if not args.skip_warmup:
