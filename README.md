@@ -110,7 +110,15 @@ sage is attacking. At length 73 the sampler speedup is 1.70x; at 124 it is
 
 Measured per-call at the 1344x768 canvas, sage `fp8++` against torch's
 flash backend, with q/k/v as the three views of one fused QKV buffer that a
-DiT block actually produces:
+DiT block actually produces.
+
+Worth being explicit about whose numbers these are: **the speed below is
+upstream SageAttention's kernel** — the sm89 INT8-QK / FP8-PV design from
+[thu-ml](https://github.com/thu-ml/SageAttention) via
+[woct0rdho](https://github.com/woct0rdho/SageAttention), which the Ada fork
+ships unmodified. The fork's contribution at these lengths is that it
+builds for sm89 at all and stays correct past ~99,864 rows (below), not
+that it is faster.
 
 | frames | packed rows S | sage | flash | ratio | attention share of step |
 |---|---|---|---|---|---|
@@ -131,10 +139,21 @@ would be about 118 s/it — 39.5 min against 16.6 min for the render.
 **Past 328 frames the addressing changes underneath you**, and it is worth
 knowing why that is safe here. Above S=99,864 rows the element offsets in
 the fused-QKV layout exceed int32, which in this layout silently zeroes the
-tail of the output rather than raising. SageAttention-ada v0.7.0 fixed this
-with a per-launch int64 specialization; v0.7.1 verified it at 362 frames,
-where it engages and costs 0.07% — inside noise. Stock SageAttention still
-has the defect. If you run long clips, this fork is not optional.
+tail of the output rather than raising.
+
+This is an upstream defect, not one the Ada fork introduced, and it is not
+obscure: kijai independently hit the same int32 wrap in Sol-Attn's own
+Triton kernels and patched it on the same day, from a different direction.
+Anything built on the unpatched quant kernels will hit it somewhere past
+100k tokens.
+
+Two independent fixes exist. SageAttention-ada v0.7.0 selects an int64
+specialization per launch, so ordinary shapes keep int32 addressing;
+v0.7.1 verified it at 362 frames, where it engages and costs 0.07% —
+inside noise. KJNodes vendors its own always-int64 copy of the quant
+kernels, which is why its H3 patch is safe against stock SageAttention
+too. Either covers you. What you should not do is run long clips on
+unpatched stock through a wrapper that does neither.
 
 ## Stacking with other attention patches
 
