@@ -14,6 +14,20 @@ not stock SageAttention -- its
 lists what differs. It has not been measured against stock, so these ratios
 mean "on this fork, this model, this box".
 
+## Status, 2026-08-06
+
+Timing has since been measured at 362 frames and is reported below. **The
+quality verdict is reopened.** The evaluation on this page judged quality by
+comparing still frames, which cannot see a temporal artifact, and a failure
+mode has since turned up that only shows in motion: at higher `tau`, a small
+persistent object can dissolve partway through a clip and be replaced by
+something else, with no recovery. Sections marked RETRACTED or REOPENED
+below have not been re-measured yet.
+
+Working configuration lives in `workflows/build_workflows.py` as
+`SOL_RECOMMENDED`, with the reasoning for each knob in the comment above it.
+The generated graphs are in `workflows/`.
+
 ## The frontier
 
 Sampler time, same seed, warmup discarded, arms alternating:
@@ -43,16 +57,33 @@ the block is linear:
 | 124 | 37,774 | ~50% |
 | 362 | 109,126 | ~76% |
 
-Backing the 1.15x out through Amdahl at a 50% share implies Sol-Attn made
-attention itself about 1.35x faster. Holding that kernel ratio and
-re-applying it at a 76% share projects **~1.25x** at 362 frames, before any
-credit for longer sequences having more skippable blocks to find. On a
-16.6-minute render that is worth roughly three minutes.
+Backing the 1.15x out through Amdahl at a 50% share implied Sol-Attn made
+attention itself about 1.35x faster, which projected **~1.25x** at 362
+frames.
 
-Projection, not measurement — the arithmetic assumes the same sparsity
-behaviour at 2.9x the length, which is exactly the assumption long
-sequences are most likely to break. It is the strongest available reason to
-re-run this evaluation at 362 frames rather than to trust the number.
+**That projection was low.** Measured at 362 frames, 1344x768, 20 steps,
+same seed, warmup discarded:
+
+| arm | sampler | vs sage |
+|---|---|---|
+| sage only | 991.0 s | 1.00x |
+| sol, no int8, tau 1.2 | 827.9 s | 1.20x |
+| sol + `int8_qk` + `int8_pv`, tau 1.2 | 714.9 s | 1.39x |
+| + tau 1.6 | 648.2 s | 1.53x |
+| + tau 2.0 | 602.9 s | 1.64x |
+
+Sparsity and int8 are separate levers of comparable size (1.20x, then
+another 1.16x). The gain grows with length exactly as the attention share
+predicts, so the 1.15x at 124 frames really was a floor.
+
+**Do not read the tau 1.6 and 2.0 rows as recommendations.** They are timing
+only, and both sit above the point where the artifact described under
+Quality appears. The rows are kept because the cost of each quality knob is
+only legible against them.
+
+These arms ran against a Sol-Attn build from 2026-08-05 whose exact commit
+was not recorded, which given how fast that node moves is a real gap -- see
+the build note below.
 
 ### Three Sol-Attn changes postdate this evaluation
 
@@ -81,6 +112,41 @@ Sol-Attn measurement needs a build at or after those commits to mean
 anything.
 
 ## Quality
+
+**REOPENED.** Everything in this section was judged from still frames, and
+the failure mode that matters is temporal. Read the next subsection first.
+
+### The artifact stills cannot show
+
+At `tau` above roughly 1.5, a small persistent object can dissolve partway
+through a clip and be replaced by something else. In frames examined at
+24 fps the transition took about four frames -- solid, coming apart,
+gone -- and it never recovered. Not warping or blurring: the object loses
+its identity and the model generates a locally plausible substitute.
+
+Two things follow.
+
+**A grid of stills at sampled shot-times cannot catch this**, which is what
+the judgments below used. Pick four moments in an eight-second clip and the
+odds of landing on both sides of a four-frame transition, on the one small
+object that failed, are poor. The instrument was fine for per-frame
+fidelity and blind to identity drift. A gate for this tracks one small
+persistent object -- a hair ornament, jewellery, on-screen text -- frame by
+frame, which is still a still-frame method, just sampled densely in time
+instead of sparsely.
+
+**The fix is to force something dense.** `dense_blocks` exempts the most
+approximation-sensitive transformer blocks; `sink_conditioning` does the
+same job for the packed conditioning rows. Both are cheaper than backing
+`tau` off far enough to avoid the problem globally.
+
+`SolAttnBlockProbe` is the instrument for choosing the block list: it runs
+every attention call both sparse and dense and logs per-block relative
+error worst-first. Run it at the `tau` you actually intend to use, since a
+profile taken at a gentler setting is measured where the failure does not
+occur. `SOL_RECOMMENDED` ships a starting set pending our own probe run.
+
+### The earlier judgments, at length 124
 
 Treat Sol-Attn as a speed knob. No quality difference held up.
 
@@ -111,8 +177,29 @@ For scale on the noise floor: the same observer called one plain-sage render
 
 The renders are kept, so re-judging cold is the cheap way to firm this up.
 
-**Measured: Sol-Attn renders are consistently louder.** Noticed by ear, then
-confirmed with `ffmpeg -af volumedetect` across all three same-seed pairs:
+### Audio
+
+**RETRACTED: "Sol-Attn renders are consistently louder."** The original
+finding is below, and it does not survive 362 frames. There the two mildest
+configurations measure *quieter* than sage, and what actually tracks
+loudness is how aggressive the sparsity is, not whether Sol-Attn is on. The
+Aug 4 result was a config effect read as a Sol-Attn effect, from three pairs
+at one setting.
+
+It may also be contaminated. Upstream fixed a Morton corruption at certain
+sizes on Aug 4 (`e353f6d`), the arms below ran with morton on, and the
+commit these were measured against was not recorded. A larger unreproducible
+audio jump was seen on one build and could not be reproduced the next day,
+which fits a size-dependent bug better than it fits anything about sparsity.
+
+What replaces it: audio deviation tracks `tau` (about +1.6 dB mean at 2.0),
+which is a real change to the signal that nobody has been able to hear. And
+H3's audio rows are ~250-400 in a ~38k sequence -- thin enough to be exactly
+what a block-sparse router drops first, the same shape as the object-dissolve
+artifact above. Forcing them dense is the fix, which is why
+`sink_conditioning="exact_kv_and_rows"` is now the default here and upstream.
+
+The original measurement, kept for the record:
 
 | pair | seed | mean dB (sage -> sol) | peak dB (sage -> sol) |
 |---|---|---|---|
@@ -132,12 +219,17 @@ transients sharpening rather than everything rising uniformly. If that is what
 is happening, "sounds better" and "is less faithful" would both be true at once:
 punchier is more pleasing and less accurate.
 
-Two things remain open and point opposite ways. H3's audio is ~250-400 rows in a
-~38k sequence and Sol-Attn reports `dense query blocks (0, 0)` -- no query rows
-dense -- so sparsity should *hurt* audio; yet forcing those rows dense
-(`exact_kv_and_rows`) also sounded better. Both cannot be right.
+That mechanism was written to explain the loudness, and the loudness is the
+part that did not replicate, so treat it as an unsupported story rather than
+a finding.
 
-What was never checked: accuracy against the sage output rather than loudness.
+The paradox recorded here -- sparsity should *hurt* thin audio rows, yet
+forcing them dense also sounded better, so both cannot be right -- resolves
+once the loudness result is dropped. Only one of the two was real: thin rows
+get routed out, and forcing them dense helps. There was never a second
+effect to reconcile.
+
+Still never checked: accuracy against the sage output rather than loudness.
 The files exist, so that is a listening test, not a render.
 
 ## Where the time actually goes
@@ -168,24 +260,48 @@ and the 1.15x measured.
 
 ## Configuration findings
 
-- **`int8_qk=True` is worth setting.** Sol-Attn's default kernel is
-  **bf16**; sage runs INT8 QK + FP8 PV. Its own tooltip says int8 helps at
-  `tau<=1.5` and we run 1.2. Measured 165.4 -> 160.6 s.
-- **Morton reordering did not help here** — about 2 s *slower* than plain
-  Sol-Attn once warm. It is off by default; leave it off unless a
-  measurement on your own shapes says otherwise.
-- **`sink_conditioning="exact_kv_and_rows"` costs ~4%**, cheaper than its
-  "~20%" tooltip. It runs H3's audio query rows dense. H3's audio is only
-  ~250-400 rows inside a ~38k packed sequence, thin enough for a
-  block-sparse router to drop, so this is the knob to reach for if audio
-  quality regresses. Whether it helps is unverified here.
+- **`int8_qk` and `int8_pv` are both worth setting.** Sol-Attn's default
+  kernel is **bf16**; sage runs INT8 QK + FP8 PV. At 362 frames the pair is
+  worth 1.16x on top of plain sparsity (827.9 -> 714.9 s). Upstream's
+  tooltip says int8 helps at `tau<=1.5` and turns into a net loss at
+  `tau>=2.0`, where the quantize pass outweighs a shrinking exact branch --
+  untested here, but consistent with running int8 at the lower taus this
+  page now recommends.
+- **`tau`: stay at or below ~1.3.** Above roughly 1.5 the object-dissolve
+  artifact under Quality appears. The timing table shows what the higher
+  settings would have bought; they are not worth it.
+- **Morton off.** At 124 frames it measured ~2 s slower than plain Sol-Attn
+  once warm. At 362 frames the picture is sharper: worth 1.16x on its own,
+  but stacked on int8 it *costs* about 3.6% (1.34x against 1.39x for int8
+  alone). Its arm also ran at 94% GPU utilisation where every other arm hit
+  99%, i.e. the permutation adds non-tensor-core work that stops paying once
+  int8 has shrunk the exact branch it routes. Upstream now defaults it off
+  too.
+- **`sink_conditioning="exact_kv_and_rows"`, on.** It runs H3's conditioning
+  query rows dense, and those rows -- ~250-400 in a ~38k sequence -- are thin
+  enough to be exactly what a block-sparse router drops first. Cost is
+  unsettled: measured ~4% at 124 frames against upstream's "~20%" tooltip.
+  It should get cheaper in relative terms on longer clips, since the
+  conditioning row count is fixed while attention grows as S^2.
+- **`dense_blocks`**, set from a `SolAttnBlockProbe` run at your own `tau`.
+  Seven of fifty blocks costs roughly 54 s on a 362-frame render, which is
+  less than backing `tau` down far enough to avoid the artifact globally.
 - The conditioning sink forces only **9 of ~591 KV blocks** exact (1.5%),
   so it is not meaningfully inflating density.
+
+### Record the Sol-Attn commit with every measurement
+
+Not a configuration finding, a process one. Sol-Attn shipped five commits on
+Aug 4 alone, at least two of them behaviour-changing at long-clip sizes. The
+timing arms and audio numbers on this page were taken without recording
+which build produced them, which puts an asterisk on all of them. Snapshot
+the node's commit alongside torch and triton versions, or the numbers cannot
+be defended later.
 
 ## Ordering
 
 ```
-UNETLoader -> MiniMax H3 SageAttention -> SolAttnPatch -> BasicGuider
+Load Diffusion Model -> MiniMax H3 SageAttention -> SolAttnPatch -> BasicGuider
 ```
 
 Sol-Attn must come second: it walks the model's existing object patches

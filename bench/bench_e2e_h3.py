@@ -46,6 +46,7 @@ import sys
 import time
 import urllib.request
 import uuid
+from pathlib import Path
 
 # Settings lifted from the bundled i2v template so this measures the
 # configuration people actually run.
@@ -71,7 +72,7 @@ DEFAULTS = dict(
 # description -- a 15-second request against a 6-second prompt leaves the
 # model to invent twelve seconds of nothing, which is its own confound.
 #
-# Second, and the reason the content is what it is: SOLATTN.md flags that
+# Second, and the reason the content is what it is: docs/SOLATTN.md flags that
 # the earlier quality comparison ran on slow camera moves and diffuse fog,
 # which is close to the worst case for *noticing* a block-sparse artifact.
 # A router that drops the wrong block shows up in fast motion, in fine
@@ -273,21 +274,29 @@ def build_prompt(cfg, *, sage, seed, sol=None):
     return g
 
 
-# SolAttnPatch's own defaults, restated so an arm only has to name what it
-# changes and the rest is pinned rather than drifting with the node.
+# SolAttnPatch's settings, pinned so an arm only has to name what it changes
+# and the rest cannot drift with the node.
 #
 # Pinning is load-bearing and nearly failed here: SolAttn changed three of
 # these underneath us. `int8_qk` and `int8_pv` now default on upstream and
 # `morton_curve` now defaults to "2d_frame". Any knob missing from this dict
 # silently takes the node's current default, so an arm named "sol" would
 # quietly have meant different things before and after that release, and the
-# ratios would not have been comparable across sessions. Values below are
-# the ones the 124-frame evaluation in SOLATTN.md ran on, so old and new
-# measurements stay on one baseline; arms opt into the new behaviour by name.
-SOL_DEFAULTS = dict(
-    tau=1.2, start_percent=0.2, end_percent=0.9, min_tokens=4096,
-    int8_qk=False, int8_pv=False, sink_conditioning="exact_kv", morton=False,
-    morton_curve="3d", verbose=False, use_tma=False, dense_blocks="",
+# ratios would not have been comparable across sessions.
+#
+# These come from workflows/h3_config.py, which the graph builder imports
+# too. They used to be a second copy living here, and the two went out of
+# sync the moment either was edited -- so a bench arm named "sol" and the
+# workflow you would actually open were different configurations, and the
+# number described something nobody ran.
+#
+# SOL_DEFAULTS stays the 124-frame baseline so recorded measurements remain
+# comparable. SOL_RECOMMENDED is what the shipped workflows run; arms opt
+# into it by name rather than by editing the baseline.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "workflows"))
+from h3_config import (  # noqa: E402
+    SOL_BASELINE_124F as SOL_DEFAULTS,
+    SOL_RECOMMENDED,
 )
 
 # name -> (sage on?, SolAttn overrides or None)
@@ -301,6 +310,11 @@ ARMS = {
     "kj+sol+int8": ("kj", {"int8_qk": True, "int8_pv": True}),
     "sol":       (False, {}),
     "sage+sol":  (True, {}),
+    # Exactly what workflows/h3_text_to_video.json runs. This is the arm to
+    # quote a render time from, because it is the only one whose settings
+    # are the ones you would actually open. Everything else here is a probe
+    # that isolates one knob against the 124-frame baseline.
+    "shipped":   (True, dict(SOL_RECOMMENDED)),
     "sage+sol+morton": (True, {"morton": True}),
     # int8_qk puts SolAttn's exact branch on INT8 QK instead of fp16, which
     # its own tooltip says helps at tau<=1.5 -- we run tau=1.2. Without it

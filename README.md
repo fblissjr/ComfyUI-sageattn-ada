@@ -173,7 +173,7 @@ chain onto, so layering is order-independent in that direction.
 **Apply this node before Sol-Attn**, so Sol-Attn sees it and composes:
 
 ```
-UNETLoader → MiniMax H3 SageAttention → SolAttnPatch → BasicGuider
+Load Diffusion Model → MiniMax H3 SageAttention → SolAttnPatch → BasicGuider
 ```
 
 Worth understanding: the two do not stack per-call, they **alternate**.
@@ -186,7 +186,7 @@ Patch* — it patches the same keys, so whichever node runs last silently
 wins and you will not know which kernel is running.
 
 Measurements, settings worth using, and what did not hold up:
-**[Experiments on sage + Sol-Attn](SOLATTN.md)**. Short version — about 1.15x on
+**[Experiments on sage + Sol-Attn](./docs/SOLATTN.md)**. Short version — about 1.15x on
 top of sage with `int8_qk=True` and `morton=False`, no quality difference that
 survived replication, and Sol-Attn renders measure consistently louder on audio
 for reasons not yet established.
