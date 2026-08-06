@@ -85,6 +85,47 @@ registers an `optimized_attention_override`. That second registration is
 what lets Sol-Attn compose rather than silently bypassing sage. Defaults are
 the intended config.
 
+**`MiniMax H3 Keyframe Canvas`** — use it on every i2v and fl2v graph.
+`MiniMaxH3ImageToVideo` takes `width`/`height` as required inputs defaulting
+to 1344x768, and non-uniformly stretches the first keyframe onto them. That
+stretch is faithful to the reference pipeline, which also stretches the
+geometry anchor and cover-crops any follower. What ComfyUI lacks is the
+*default* that normally makes it a no-op: the reference derives the canvas
+from the first keyframe when no size is given
+(`modular_pipelines/minimax_h3/before_encoder.py::MiniMaxH3ResizeStep` ->
+`resolve_canvas_size`) and then skips the resize once the keyframe matches.
+The reference's deliberate-override branch is ComfyUI's default branch.
+
+Measured distortion at the default canvas, from
+`bench/check_keyframe_canvas.py`:
+
+| source | ratio | stretch |
+|---|---|---|
+| 768x1024 | 0.750 | **2.33x** |
+| 1024x1024 | 1.000 | **1.75x** |
+| 2560x1080 | 2.370 | 1.35x |
+| 1000x700 | 1.429 | 1.23x |
+| 1920x1080 | 1.778 (true 16:9) | 1.016x |
+| 1344x768 | 1.750 | 1.00x |
+
+**The default canvas is 7:4, not 16:9.** 1344/768 = 1.7500; 16/9 = 1.7778. A
+genuine 16:9 source takes a 1.6% squeeze, not a no-op — small, but do not read
+the table as "16:9 is safe". Round-to-32 on both axes means no H3 canvas is
+exactly 16:9: `adapt_canvas(16, 9)` returns 1344x768. That is the model's canvas
+rule, not a ComfyUI choice, and the node inherits it.
+
+It is silent, and every frame of the clip inherits it. The node runs
+`adapt_canvas` — ComfyUI's own port of `resolve_canvas_size`, sitting unused
+on the keyframe path — and fits the keyframes onto the result. Wire its
+`width`/`height` and both image outputs into the H3 node; the keyframe then
+arrives already at canvas size and the stock resize is a bit-identical no-op
+(verified, `max|delta| = 0`). With two keyframes the canvas comes from the
+first and the follower is cover-cropped, as in the reference.
+
+Cost: output resolution now follows the input's aspect. A 9:16 still renders
+768x1344, the slowest canvas on the area cap. That is the reference's own
+behaviour, not an extra.
+
 ### Use from Sol-Attn (`ComfyUI-SolAttn_triton`)
 
 **`SolAttnPatch`** — block-sparse attention. **Must come after** the sage

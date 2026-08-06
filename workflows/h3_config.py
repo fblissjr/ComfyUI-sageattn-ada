@@ -37,11 +37,37 @@ MODELS = dict(
     audio_vae="minimax_h3_audio_vae_fp32.safetensors",
 )
 
-# From the bundled templates, which is what keeps these comparable to the
-# numbers in the README. `res_multistep` is one model eval per step (true
-# multistep, reuses `old_denoised`), so it costs what euler costs -- sampler
-# choice here is a quality decision, never a speed one.
-SAMPLING = dict(sampler="res_multistep", scheduler="simple", steps=20, denoise=1.0)
+# `res_multistep` is one model eval per step (true multistep, reuses
+# `old_denoised`), so it costs what euler costs. Note that is not true of the
+# whole sampler list: `heun`, `dpm_2`, and the `2s`/`3s`/`res_Ns` families are
+# 2-6 evals per step, and picking one silently multiplies the ~91% of render
+# time the sampler occupies.
+#
+# **steps 16, measured and judged 2026-08-06.** 20 was the bundled template's
+# default and was never questioned until it turned out to be the largest
+# untested lever in the config -- steps multiply everything, including the
+# ~24% of the step that attention work cannot reach. At 362 frames:
+#
+#   20 steps  765.4 s      16 steps  669.2 s  (-12.6%)      12 steps  508.5 s
+#
+# 12 was rejected, and for a reason worth recording because two of the three
+# gates we had prepared would have passed it. It is not smeared and it has no
+# late-clip artifact -- it simply **stops following the prompt**. The test
+# prompt specifies three shots with explicit cut times, and at 12 steps the
+# third one (a pull-back into the street at 00:10) never happens. Shot
+# structure is a long-range instruction and the trajectory settles into
+# something simpler before reaching it. Invisible in stills, invisible to a
+# convergence check, only catchable by watching to the end knowing what was
+# asked for. Any future step reduction needs that as a third gate.
+#
+# Scheduler stays `simple`. `beta57` was tested and dropped -- not because it
+# sampled worse but because the comparison was never isolating the scheduler:
+# Sol-Attn's window is a *percent* band that `percent_to_sigma` resolves off
+# the model's sigma curve with no knowledge of the scheduler, so a different
+# scheduler puts a different number of steps inside it. beta57 ran 10 dense
+# steps at 20 against simple's 6, which is why it measured slower (825.1 s
+# against 765.4). It also came from a custom node pack rather than core.
+SAMPLING = dict(sampler="res_multistep", scheduler="simple", steps=16, denoise=1.0)
 
 # SolAttn knobs, pinned so neither a graph nor a bench arm inherits whatever
 # the node currently defaults to. Pinning is load-bearing and has already
@@ -57,57 +83,13 @@ SAMPLING = dict(sampler="res_multistep", scheduler="simple", steps=20, denoise=1
 # together and can never co-reside. So the ceiling on headroom-to-speed is
 # ~2.6%, and knobs that trade launches for headroom are not worth it.
 #
-#   tau 2.0           The largest single lever. The often-quoted 1.64x
-#                     (602.9 s against 991.0 s sage-only, tau 1.2 at
-#                     714.9 s) comes from a 2026-08-05 ladder taken on
-#                     Sol-Attn and KJNodes commits nobody recorded -- which
-#                     is why internal/h3_stack_versions.md now exists. A
-#                     2026-08-06 run of this same config measured 693.3 s
-#                     total, but autotune-cold and against a different
-#                     stopwatch (total, not sampler), so the two are not
-#                     comparable and the gap cannot currently be
-#                     decomposed. **Do not quote a speedup from this file
-#                     until a warm re-run on pinned commits exists.**
-#                     It was briefly set to
-#                     1.3 on a report that sparse routing makes a small
-#                     persistent object dissolve mid-clip above tau ~1.5.
+#   tau 1.3           Below the onset of the moving-content artifact -- see
+#                     the two-phenomena note below. Costs 82.3 s of sampler
+#                     against tau 2.0, measured same-seed at 362 frames
+#                     (712.1 s against 629.8 s), and worth it.
 #   dense_blocks ""   Was 33-35,39-42, the two highest-error regions on the
-#                     author's per-block sensitivity profile.
-#
-# Why both were dropped, stated carefully because this went back and forth
-# twice and the intermediate positions were both written down before being
-# superseded. Three separate claims, each at its own tier:
-#
-# 1. MEASURED. The reported artifact -- a small persistent object losing
-#    its identity mid-clip and being regenerated as something else -- was
-#    **not reproduced** at 16:9 / 362 frames, at tau 2.0, past the reported
-#    onset, on a deliberately tracked object.
-# 2. OBSERVED. What is there instead is broad late-clip softening: zoomed-out
-#    content getting less clear and drifting, mildly, at the end. That is the
-#    ordinary long-clip DiT failure at 362 frames, the top of H3's trained
-#    range, and it is a different shape from the reported artifact.
-# 3. MEASURED. `dense_blocks` made no visible difference to (2) on a
-#    same-seed comparison, and cost 29-70 s (~5-10%) per render.
-#
-# INFERRED, not measured: that sparse routing is not implicated. It rests on
-# the drift's shape -- broad rather than small-object-specific -- where the
-# sparse mechanism predicts the opposite, since the long-range temporal links
-# carrying one object's identity are what a block-sparse router prunes first.
-# No no-sparsity control was run; every arm in the comparison had sparse
-# attention on, so none of them isolates sparsity. One sage-only 362-frame
-# arm at the same seed would settle it, and was deliberately skipped as not
-# worth a render window against something that reads as model-inherent. Do
-# not let this harden into a fact by repetition -- it is an inference from
-# one viewing, and it is also what decides whether these 5-10% are free.
-#
-# The block list is kept below rather than deleted, since it comes from a
-# measured sensitivity profile and is independent of whether the exemption
-# fixes this particular failure. Re-derive with `SolAttnBlockProbe` at the
-# tau actually in use before trusting it -- a profile taken at a gentler
-# setting is measured where the failure does not occur. Scope the negative
-# result honestly too: it is "does not fix the drift at 16:9 / 362 frames",
-# not "the blocks do not help", which we have not tested at the geometry
-# they were derived on (768x1344 / 192 frames).
+#                     author's per-block sensitivity profile. Dropped: it
+#                     does not fix the artifact tau does, and costs 39.2 s.
 #   exact_kv_and_rows Runs the packed conditioning query rows dense, which
 #                     is what keeps the generated audio intact. Those rows
 #                     are ~250-400 in a ~38k sequence, thin enough to be
@@ -122,8 +104,21 @@ SAMPLING = dict(sampler="res_multistep", scheduler="simple", steps=20, denoise=1
 # in this chain: it costs ~4x the attention launches to buy headroom that
 # converts to at most the ~2.6% above. Revisit only if a head_chunks 1-vs-4
 # A/B says the launches are free.
+#
+# **The sigma window stays .2-.9, and widening it is closed.** `.1-.95` is
+# tempting -- 687.4 s against 768.2 at 20 steps, ~10%, and it passed every
+# gate there including prompt adherence. It does not survive at 16 steps:
+# 568.8 s, but the shot timeline drifts (the scripted 00:10 cut lands nearer
+# 12-13 s) and the subject's motion stalls. Not smearing, not the late-clip
+# artifact -- a fourth failure mode, structural timing.
+#
+# Worth keeping as a caution rather than a footnote: **both factors passed
+# adherence individually and the combination failed.** 20 steps + wide hit
+# the cut on time; 16 steps + narrow hit it on time; 16 + wide did not. A
+# knob validated at one setting of another knob is not validated, and the
+# ten minutes spent confirming that was the cheapest measurement of the day.
 SOL_RECOMMENDED = dict(
-    tau=2.0, start_percent=0.2, end_percent=0.9, min_tokens=4096,
+    tau=1.3, start_percent=0.2, end_percent=0.9, min_tokens=4096,
     int8_qk=True, sink_conditioning="exact_kv_and_rows", morton=False,
     morton_curve="2d_frame", int8_pv=True, verbose=False, use_tma=False,
     dense_blocks="",

@@ -466,7 +466,15 @@ def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
                                   sol["min_tokens"], sol["int8_qk"],
                                   sol["sink_conditioning"], sol["morton"],
                                   sol["morton_curve"], sol["int8_pv"], sol["verbose"],
-                                  sol["use_tma"], sol["dense_blocks"]],
+                                  sol["use_tma"], sol["dense_blocks"],
+                                  # tau_profile, added by Sol-Attn 0e334dc: per-block
+                                  # tau overriding the base value. Empty means one tau
+                                  # everywhere, which is what we ship. Present here
+                                  # because the widget count must match the node's
+                                  # schema exactly -- the validator caught this the
+                                  # first build after the update, which is the whole
+                                  # reason it runs against live object_info.
+                                  sol.get("tau_profile", "")],
                          inputs=[_in("model", "MODEL")],
                          outputs=[_out("MODEL", "MODEL")],
                          title=("Patch Sol-Attn" if sol_enabled

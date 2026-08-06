@@ -10,6 +10,9 @@ import logging
 
 from comfy_api.latest import ComfyExtension, io
 
+from .assert_chain import SageChainAssert
+from .keyframe_canvas import MiniMaxH3KeyframeCanvas
+
 from .attention import (
     MODES,
     build_kernel,
@@ -126,7 +129,7 @@ class MiniMaxH3SageAttention(io.ComfyNode):
 
 class SageAttnAdaExtension(ComfyExtension):
     async def get_node_list(self):
-        return [MiniMaxH3SageAttention]
+        return [MiniMaxH3SageAttention, SageChainAssert, MiniMaxH3KeyframeCanvas]
 
 
 async def comfy_entrypoint() -> SageAttnAdaExtension:

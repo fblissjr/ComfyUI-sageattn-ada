@@ -207,7 +207,7 @@
         "Node name for S&R": "SolAttnPatch"
       },
       "widgets_values": [
-        2.0,
+        1.3,
         0.2,
         0.9,
         4096,
@@ -218,6 +218,7 @@
         true,
         false,
         false,
+        "",
         ""
       ],
       "title": "Patch Sol-Attn"
@@ -544,7 +545,7 @@
       },
       "widgets_values": [
         "simple",
-        20,
+        16,
         1.0
       ]
     },
