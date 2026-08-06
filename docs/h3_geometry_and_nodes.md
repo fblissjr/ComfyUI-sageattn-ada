@@ -126,6 +126,37 @@ Cost: output resolution now follows the input's aspect. A 9:16 still renders
 768x1344, the slowest canvas on the area cap. That is the reference's own
 behaviour, not an extra.
 
+**`MiniMax H3 Provenance Stamp (bench)`** — **bench graphs only, keep it out
+of shipped workflows.** Writes a JSON sidecar to `output/provenance/`
+recording what a render's settings *resolved to*. It deliberately records
+nothing you typed: `/history/{prompt_id}` already carries the whole graph with
+every widget value and the output filenames. It records only what `/history`
+structurally cannot know — the resolved sigmas, the eleven Sol closure values
+(what actually ran, if anything replaced the override), the node-pack HEADs and
+sage build, and the snapped frame count and canvas.
+
+The field it exists for is `n_sparse`. That is not a setting anywhere: it is the
+sigma window intersected with the sampler's schedule, so two schedulers with
+identical `sol_compose` bounds can run a different number of sparse steps and
+nothing in the graph, the logs or `/history` says so. Wire `SIGMAS` from
+`BasicScheduler` or the field cannot be computed, and pass the sampler's
+`LATENT` through it — ComfyUI orders by dependency, not graph position, so
+without a real data dependency it can legally run *before* sampling.
+
+Three states, all visible in the record rather than only in the log:
+`sol: absent` (nothing installed, fine), `present` (values recorded), and
+`broken` (override installed but its closure unreadable), which also raises —
+most likely meaning the pack renamed parameters and `SOL_CLOSURE_KEYS` needs
+updating. Joins to `/history` on `graph_sha256`, since ComfyUI does not expose
+`prompt_id` to nodes.
+
+Two cautions are in the module docstring and worth repeating: a
+well-provenanced number is not a verified one, and a stamp makes invented
+mechanisms *more* dangerous rather than less, because a number with a full
+provenance record beside it reads as more trustworthy while carrying a wrong
+causal story just as well. It records what settings resolved to, never why a
+number came out the way it did.
+
 ### Use from Sol-Attn (`ComfyUI-SolAttn_triton`)
 
 **`SolAttnPatch`** — block-sparse attention. **Must come after** the sage

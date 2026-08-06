@@ -117,15 +117,33 @@ class SageChainAssert(io.ComfyNode):
 
         # min_tokens defaults to 4096 and the kernel needs head_dim 128, so a
         # genuinely small probe would be declined for being small -- which
-        # would look identical to a broken chain.
-        B, H, S, D = 1, 56, 4608, 128
+        # would look identical to a broken chain. Named in the [B, S, H, D]
+        # layout the override actually takes, so the unpack order and the
+        # construction order agree; a file whose job is being trustworthy
+        # should not read like it has a transposed-axis bug.
+        BATCH, SEQ, HEADS, HEAD_DIM = 1, 4608, 56, 128
         dt = torch.bfloat16
-        q, k, v = (torch.randn(B, S, H, D, device="cuda", dtype=dt) for _ in range(3))
+
+        # 3 x 66 MB of probe, plus the kernel's own output and workspace, at the
+        # moment the model is being staged. On a card already oversubscribed by
+        # H3's stack that is a bad time to be the allocation that fails, so give
+        # up the call-time evidence rather than the render.
+        need = 4 * BATCH * SEQ * HEADS * HEAD_DIM * 2
+        free = torch.cuda.mem_get_info()[0]
+        if free < need * 4:
+            return None, (f"skipped the probe: {free / 2**20:.0f} MiB free, want "
+                          f"{need * 4 / 2**20:.0f} MiB headroom for a "
+                          f"{need / 2**20:.0f} MiB probe. Registration checks "
+                          f"above still passed; routing was not confirmed at "
+                          f"call time")
+
+        q, k, v = (torch.randn(BATCH, SEQ, HEADS, HEAD_DIM, device="cuda", dtype=dt)
+                   for _ in range(3))
         before = dict(stats_fn())
         try:
             with torch.inference_mode():
                 override(lambda *a, **kw: torch.zeros_like(q),
-                         q, k, v, H, transformer_options=dict(to))
+                         q, k, v, HEADS, transformer_options=dict(to))
         except Exception as exc:
             return False, f"composed attention raised on a probe call: {exc!r}"
         finally:

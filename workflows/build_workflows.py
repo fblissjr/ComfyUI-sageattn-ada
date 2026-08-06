@@ -104,7 +104,8 @@ N/A"""
 
 def build_api(task: str, *, sage: bool = True, prompt: str | None = None,
               length: int = LENGTH, seed: int = SEED,
-              sol: dict | None = None, **canvas) -> dict:
+              sol: dict | None = None, canvas_mode: str = "fit_to_canvas",
+              stamp: bool = False, **canvas) -> dict:
     """API-format graph, submittable as {"prompt": <this>} to POST /prompt.
 
     Node ids match `bench/bench_e2e_h3.py` so a timing run and a hand-edited
@@ -167,11 +168,22 @@ def build_api(task: str, *, sage: bool = True, prompt: str | None = None,
         inputs = {"clip": ["2", 0], "vae": ["3", 0], "prompt": prompt,
                   "width": cv["width"], "height": cv["height"], "length": length}
         if task == "i2v":
-            # first_frame only. Adding "last_frame": ["17", 0] from a second
+            # first_frame only. Wiring node 17's last_frame from a second
             # LoadImage turns this into the fl2va task the checkpoint is named
             # for; the model and every other node stay the same.
-            inputs["first_frame"] = ["15", 0]
+            #
+            # The keyframe never reaches node 5 directly. MiniMaxH3ImageToVideo
+            # stretches the first keyframe onto width/height non-uniformly --
+            # 2.33x on a 3:4 still at the default canvas -- so node 17 fits it
+            # first and hands over both the image and the size it was fitted to.
+            # Node 5's own resize is then a bit-identical no-op.
             g["15"] = {"class_type": "LoadImage", "inputs": {"image": PLACEHOLDER_IMAGE_A}}
+            g["17"] = {"class_type": "MiniMaxH3KeyframeCanvas",
+                       "inputs": {"first_frame": ["15", 0], "mode": canvas_mode,
+                                  "width": cv["width"], "height": cv["height"]}}
+            inputs["first_frame"] = ["17", 2]
+            inputs["width"] = ["17", 0]
+            inputs["height"] = ["17", 1]
         g["5"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": inputs}
 
     model_src = ["1", 0]
@@ -189,6 +201,19 @@ def build_api(task: str, *, sage: bool = True, prompt: str | None = None,
     # The fork. Both consumers, always, from the same variable.
     g["8"]["inputs"]["model"] = model_src
     g["9"]["inputs"]["model"] = model_src
+
+    if stamp:
+        # Bench only. Sits inline between the sampler and both decoders so it
+        # has a real data dependency on the sampler's output -- ComfyUI orders
+        # by dependency, not graph position, and a stamp with no such edge can
+        # legally run BEFORE sampling and record pre-render state. It also
+        # needs SIGMAS: n_sparse is the sigma window intersected with the
+        # schedule and is readable from nothing else.
+        g["22"] = {"class_type": "MiniMaxH3ProvenanceStamp",
+                   "inputs": {"latent": ["10", 0], "model": model_src,
+                              "sigmas": ["8", 0], "note": f"bench {task}"}}
+        g["11"]["inputs"]["samples"] = ["22", 0]
+        g["12"]["inputs"]["samples"] = ["22", 0]
     return g
 
 
@@ -419,6 +444,7 @@ are paying full price for a render that otherwise looks fine.
 def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
              length: int = LENGTH, seed: int = SEED, preview: bool = False,
              sol: dict | None = None, sol_enabled: bool = True,
+             canvas_mode: str = "fit_to_canvas", stamp: bool = False,
              **canvas) -> dict:
     ref = task == "r2v"
     cv = dict(CANVAS, **canvas)
@@ -538,16 +564,36 @@ def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
         cond_inputs = [_in("clip", "CLIP"), _in("vae", "VAE"),
                        _in("first_frame", "IMAGE", optional=True),
                        _in("last_frame", "IMAGE", optional=True)]
+        if task == "i2v":
+            # width/height arrive as links from the canvas node rather than as
+            # typed widgets, so they need input sockets.
+            cond_inputs += [_in("width", "INT", widget=True),
+                            _in("height", "INT", widget=True)]
         cond = g.add("MiniMaxH3ImageToVideo", (-460, 0), size=(430, 560),
                      widgets=[prompt, cv["width"], cv["height"], length],
                      inputs=cond_inputs,
                      outputs=[_out("positive", "CONDITIONING"), _out("LATENT", "LATENT")])
         g.link(vvae, 0, cond, "vae", "VAE")
         if task == "i2v":
-            img_a = g.add("LoadImage", (-880, 640), size=(290, 330),
+            img_a = g.add("LoadImage", (-880, 900), size=(290, 330),
                           widgets=[PLACEHOLDER_IMAGE_A, "image"],
                           outputs=[_out("IMAGE", "IMAGE"), _out("MASK", "MASK")])
-            g.link(img_a, 0, cond, "first_frame", "IMAGE")
+            # The keyframe goes through the canvas node, never straight into
+            # MiniMaxH3ImageToVideo -- that node stretches the first keyframe
+            # onto width/height non-uniformly (2.33x on a 3:4 still at the
+            # default canvas). Fitted first, its resize becomes a no-op.
+            kfc = g.add("MiniMaxH3KeyframeCanvas", (-880, 640), size=(330, 200),
+                        widgets=[canvas_mode, cv["width"], cv["height"]],
+                        inputs=[_in("first_frame", "IMAGE"),
+                                _in("last_frame", "IMAGE", optional=True)],
+                        outputs=[_out("width", "INT"), _out("height", "INT"),
+                                 _out("first_frame", "IMAGE"),
+                                 _out("last_frame", "IMAGE"),
+                                 _out("attn_cost_vs_1to1", "FLOAT")])
+            g.link(img_a, 0, kfc, "first_frame", "IMAGE")
+            g.link(kfc, 2, cond, "first_frame", "IMAGE")
+            g.link(kfc, 0, cond, "width", "INT")
+            g.link(kfc, 1, cond, "height", "INT")
     g.link(clip, 0, cond, "clip", "CLIP")
 
     noise = g.add("RandomNoise", (40, 0), size=(300, 110), widgets=[seed, "randomize"],
@@ -586,9 +632,25 @@ def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
     g.link(guider, 0, sampler, "guider", "GUIDER")
     g.link(samp, 0, sampler, "sampler", "SAMPLER")
     g.link(sched, 0, sampler, "sigmas", "SIGMAS")
-    g.link(sampler, 0, vdec, "samples", "LATENT")
+    latent_src, latent_slot = sampler, 0
+    if stamp:
+        # Bench only. Inline between the sampler and both decoders so it has a
+        # real data dependency on the sampler -- ComfyUI orders by dependency,
+        # not graph position, and without that edge it can legally run BEFORE
+        # sampling and record pre-render state. SIGMAS is what makes n_sparse
+        # computable; nothing else exposes it.
+        stampn = g.add("MiniMaxH3ProvenanceStamp", (780, 240), size=(330, 130),
+                       widgets=[f"bench {task}"],
+                       inputs=[_in("latent", "LATENT"), _in("model", "MODEL"),
+                               _in("sigmas", "SIGMAS", optional=True)],
+                       outputs=[_out("latent", "LATENT")])
+        g.link(sampler, 0, stampn, "latent", "LATENT")
+        g.link(model_src, 0, stampn, "model", "MODEL")
+        g.link(sched, 0, stampn, "sigmas", "SIGMAS")
+        latent_src, latent_slot = stampn, 0
+    g.link(latent_src, latent_slot, vdec, "samples", "LATENT")
     g.link(vvae, 0, vdec, "vae", "VAE")
-    g.link(sampler, 0, adec, "samples", "LATENT")
+    g.link(latent_src, latent_slot, adec, "samples", "LATENT")
     g.link(avae, 0, adec, "vae", "VAE")
     g.link(vdec, 0, mux, "images", "IMAGE")
     g.link(adec, 0, mux, "audio", "AUDIO")
@@ -871,6 +933,8 @@ def main():
          "text -> video + audio"),
         ("h3_image_ref_plus_text_to_video.json", "r2v", None,
          "reference image(s) + text -> video + audio"),
+        ("h3_first_frame_to_video.json", "i2v", None,
+         "first frame + text -> video + audio (via MiniMaxH3KeyframeCanvas)"),
     ):
         wf = build_ui(task, sage=True, length=LONG_LENGTH, preview=True,
                       sol=SOL_RECOMMENDED, sol_enabled=True, prompt=prompt)
@@ -885,12 +949,30 @@ def main():
     for fname, task, prompt in (
         ("h3_text_to_video_api.json", "t2v", LONG_T2V_PROMPT),
         ("h3_image_ref_plus_text_to_video_api.json", "r2v", None),
+        ("h3_first_frame_to_video_api.json", "i2v", None),
     ):
         wf = build_api(task, sage=True, length=LONG_LENGTH,
                        sol=SOL_RECOMMENDED, prompt=prompt)
         p = out / fname
         p.write_text(json.dumps(wf, indent=2, ensure_ascii=False) + "\n")
         written.append((task, "api", p, wf))
+
+    # Bench copies carrying MiniMaxH3ProvenanceStamp. Deliberately NOT the
+    # shipped graphs: the stamp reads another pack's closure internals, so it
+    # breaks when that pack changes, and a bench is where breakage is cheap.
+    # API-only, so cross_check skips them (it needs both formats to compare).
+    bench = out / "bench"
+    bench.mkdir(parents=True, exist_ok=True)
+    for fname, task, prompt in (
+        ("h3_text_to_video_stamped_api.json", "t2v", LONG_T2V_PROMPT),
+        ("h3_image_ref_plus_text_to_video_stamped_api.json", "r2v", None),
+        ("h3_first_frame_to_video_stamped_api.json", "i2v", None),
+    ):
+        wf = build_api(task, sage=True, length=LONG_LENGTH,
+                       sol=SOL_RECOMMENDED, prompt=prompt, stamp=True)
+        p = bench / fname
+        p.write_text(json.dumps(wf, indent=2, ensure_ascii=False) + "\n")
+        written.append((f"{task}-stamped", "api", p, wf))
 
     for _t, _f, p, _w in written:
         print(f"wrote {p.name}")
