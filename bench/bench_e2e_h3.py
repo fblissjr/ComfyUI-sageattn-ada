@@ -122,6 +122,28 @@ PROMPT = (
 )
 
 
+def _split_arms(spec):
+    """Split --arms on commas that separate arms, not ones inside brackets.
+
+    A plain `spec.split(",")` shreds `sage+sol[int8_qk=0,int8_pv=0]` into
+    two fragments, neither of which parses. Depth-tracking keeps the
+    overrides together.
+    """
+    out, depth, cur = [], 0, []
+    for ch in spec:
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+    out.append("".join(cur).strip())
+    return out
+
+
 def _is_adhoc(name):
     return name.endswith("]") and "[" in name
 
@@ -381,7 +403,7 @@ def main():
     def seed_for(i):
         return args.seed + i
 
-    arms = [a.strip() for a in args.arms.split(",") if a.strip()]
+    arms = [a for a in _split_arms(args.arms) if a]
     unknown = [a for a in arms if a not in ARMS and not _is_adhoc(a)]
     if unknown:
         print(f"unknown arm(s) {unknown}; known: {list(ARMS)}")
