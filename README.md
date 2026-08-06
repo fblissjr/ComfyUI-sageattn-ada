@@ -16,8 +16,16 @@ for SageAttention's INT8-QK / FP8-PV kernel.
 
 The node replaces each block's attention `forward`. Compared to going
 through ComfyUI's generic attention dispatch, that also lets q/k/v stay in
-the layout the fused QKV projection already produces, and lets the float
-q/k/v be released as soon as their quantized forms exist.
+the layout the fused QKV projection already produces.
+
+It used to also claim the win came partly from releasing the float q/k/v as
+soon as their quantized forms exist. That is not where it comes from here:
+`sageattn_consume` saves **0 MiB** when q/k/v are three views of one fused
+QKV buffer, which is exactly what `qkv_proj(x).split(...)` produces in every
+H3 block (SageAttention-ada v0.7.3 measured all four arms). The peak
+reduction below is real and reproduces, but what accounts for it has not
+been isolated — so treat it as a measured number without a mechanism, per
+the both-arms rule this repo's own bench discipline sets.
 
 ## Measured
 
