@@ -159,6 +159,14 @@ def resolve_arm(name):
         sage+sol[tau=1.6]                 sage on, one override
         sage+sol[tau=2.0,int8_qk=1]       several
         sol[start_percent=0.1]            SolAttn without sage
+        kj+sol[tau=1.6]                   KJNodes' H3 patch instead of ours
+
+    A `kj` prefix swaps the patching surface for KJNodes'
+    MiniMaxH3MemoryEfficientSageAttentionPatch. Both patch the same 50
+    attention forwards and both call this install's sage kernels; they
+    differ in that ours routes through `sageattn_consume` (releasing q/k/v
+    as their quantized forms appear) and leaves `smooth_k` off, where
+    KJNodes hand-rolls the per-arch quant sequence and turns `smooth_k` on.
 
     Values are typed by SOL_DEFAULTS, so `int8_qk=1` becomes True and
     `tau=1.6` a float. A key not in SOL_DEFAULTS is an error rather than
@@ -185,7 +193,7 @@ def resolve_arm(name):
             overrides[k] = float(v)
         else:
             overrides[k] = v
-    return base.startswith("sage"), overrides
+    return ("kj" if base.startswith("kj") else base.startswith("sage")), overrides
 
 
 def pick_prompt(cfg):
@@ -241,7 +249,17 @@ def build_prompt(cfg, *, sage, seed, sol=None):
                           "format": "auto", "codec": "auto"}},
     }
     model_src = ["1", 0]
-    if sage:
+    if sage == "kj":
+        # KJNodes' patch as the attention surface instead of ours. It takes no
+        # options -- no mode, no token-refiner switch -- and it calls this
+        # install's sage kernels either way, so this arm swaps the wrapper,
+        # not the kernel. The two differ in that we route through
+        # sageattn_consume and leave smooth_k off where KJNodes hand-rolls
+        # the quant sequence and enables it.
+        g["20"] = {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch",
+                   "inputs": {"model": model_src}}
+        model_src = ["20", 0]
+    elif sage:
         g["20"] = {"class_type": "MiniMaxH3SageAttention",
                    "inputs": {"model": model_src, "mode": "auto",
                               "patch_token_refiner": False}}
@@ -276,6 +294,11 @@ SOL_DEFAULTS = dict(
 ARMS = {
     "off":       (False, None),
     "sage":      (True, None),
+    # KJNodes' H3 patch as the attention surface. Same 50 forwards, same
+    # installed kernels; the wrapper differs.
+    "kj":        ("kj", None),
+    "kj+sol":    ("kj", {}),
+    "kj+sol+int8": ("kj", {"int8_qk": True, "int8_pv": True}),
     "sol":       (False, {}),
     "sage+sol":  (True, {}),
     "sage+sol+morton": (True, {"morton": True}),
@@ -303,10 +326,20 @@ ARMS = {
     # more at 362 frames (latent_t 107) than at the 124 frames (latent_t 37)
     # the earlier evaluation ran, where morton measured neutral-to-slightly-good.
     "sage+sol+morton2d": (True, {"morton": True, "morton_curve": "2d_frame"}),
-    # Everything upstream now defaults to, as one arm: the realistic
-    # "user drops in the current node and leaves it alone" configuration.
-    "sage+sol+current": (True, {"int8_qk": True, "int8_pv": True,
-                                "morton": True, "morton_curve": "2d_frame"}),
+    # int8 + the frame-local morton curve, on our pinned baseline. NOT a
+    # reproduction of upstream's shipped defaults -- it inherits tau=1.2 and
+    # sink_conditioning="exact_kv" from SOL_DEFAULTS, where upstream ships
+    # 1.3 and "exact_kv_and_rows". Named "current" originally, which claimed
+    # more than it tested; it is an isolation arm for morton-on-top-of-int8.
+    "sage+sol+int8+morton2d": (True, {"int8_qk": True, "int8_pv": True,
+                                      "morton": True, "morton_curve": "2d_frame"}),
+    # What a user actually gets from dropping in the current node untouched.
+    # Every knob at upstream's own default, overriding our pinned baseline
+    # where the two differ (tau, sink_conditioning).
+    "sage+sol+upstream_defaults": (True, {"tau": 1.3, "int8_qk": True,
+                                          "int8_pv": True, "morton": True,
+                                          "morton_curve": "2d_frame",
+                                          "sink_conditioning": "exact_kv_and_rows"}),
     # H3's audio is ~250-400 rows inside a ~38k packed sequence -- thin
     # enough for a block-sparse router to drop. exact_kv_and_rows runs
     # those query rows dense so the generated audio stream stays exact,
