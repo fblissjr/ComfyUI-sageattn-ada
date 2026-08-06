@@ -1,8 +1,8 @@
 {
-  "id": "h3-r2v-sage",
+  "id": "h3-t2v-sage",
   "revision": 0,
-  "last_node_id": 21,
-  "last_link_id": 23,
+  "last_node_id": 17,
+  "last_link_id": 20,
   "nodes": [
     {
       "id": 1,
@@ -32,7 +32,7 @@
         "Node name for S&R": "UNETLoader"
       },
       "widgets_values": [
-        "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "default"
       ]
     },
@@ -56,7 +56,7 @@
           "name": "CLIP",
           "type": "CLIP",
           "links": [
-            8
+            5
           ]
         }
       ],
@@ -90,7 +90,7 @@
           "type": "VAE",
           "links": [
             4,
-            18
+            15
           ]
         }
       ],
@@ -122,8 +122,7 @@
           "name": "VAE",
           "type": "VAE",
           "links": [
-            5,
-            20
+            17
           ]
         }
       ],
@@ -207,7 +206,7 @@
         "Node name for S&R": "SolAttnPatch"
       },
       "widgets_values": [
-        2.0,
+        1.3,
         0.2,
         0.9,
         4096,
@@ -218,7 +217,7 @@
         true,
         false,
         false,
-        ""
+        "33-35,39-42"
       ],
       "title": "Patch Sol-Attn"
     },
@@ -254,8 +253,8 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            9,
-            10
+            6,
+            7
           ]
         }
       ],
@@ -274,23 +273,23 @@
     },
     {
       "id": 8,
-      "type": "MiniMaxH3ReferenceToVideo",
+      "type": "MiniMaxH3ImageToVideo",
       "pos": [
         -460,
         0
       ],
       "size": [
         430,
-        620
+        560
       ],
       "flags": {},
-      "order": 14,
+      "order": 7,
       "mode": 0,
       "inputs": [
         {
           "name": "clip",
           "type": "CLIP",
-          "link": 8
+          "link": 5
         },
         {
           "name": "vae",
@@ -298,50 +297,15 @@
           "link": 4
         },
         {
-          "name": "audio_vae",
-          "type": "VAE",
-          "link": 5
-        },
-        {
-          "name": "ref_images.ref_image_0",
-          "type": "IMAGE",
-          "link": 6,
-          "label": "ref_image_0",
-          "shape": 7
-        },
-        {
-          "name": "ref_images.ref_image_1",
-          "type": "IMAGE",
-          "link": 7,
-          "label": "ref_image_1",
-          "shape": 7
-        },
-        {
-          "name": "ref_images.ref_image_2",
+          "name": "first_frame",
           "type": "IMAGE",
           "link": null,
-          "label": "ref_image_2",
           "shape": 7
         },
         {
-          "name": "ref_videos.ref_video_0",
+          "name": "last_frame",
           "type": "IMAGE",
           "link": null,
-          "label": "ref_video_0",
-          "shape": 7
-        },
-        {
-          "name": "ref_video_audios.ref_video_audio_0",
-          "type": "AUDIO",
-          "link": null,
-          "label": "ref_video_audio_0",
-          "shape": 7
-        },
-        {
-          "name": "ref_audios.ref_audio_0",
-          "type": "AUDIO",
-          "link": null,
-          "label": "ref_audio_0",
           "shape": 7
         }
       ],
@@ -350,104 +314,29 @@
           "name": "positive",
           "type": "CONDITIONING",
           "links": [
-            11
+            8
           ]
         },
         {
           "name": "LATENT",
           "type": "LATENT",
           "links": [
-            12
+            9
           ]
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3ReferenceToVideo"
+        "Node name for S&R": "MiniMaxH3ImageToVideo"
       },
       "widgets_values": [
-        "subject_definitions:\n<Subject 1> is the main character in <Picture 1>, whose face, hair, and clothing are carried into the target video.\n<Subject 2> is the environment in <Picture 2>, whose architecture, palette, and lighting are carried into the target video.\n\nsummary:\n[reference generation] The target video places <Subject 1> inside <Subject 2> for a single continuous shot.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - face, hair, and clothing are retained.\n<Subject 2> (appears in [Shot 1]): fully_preserved - architecture, palette, and lighting are retained.\n\ndetailed_description:\nThe target video is in a cinematic live-action style with soft directional lighting.\n[Shot 1] A medium shot establishes <Subject 2>, then <Subject 1> enters from the left and stops at the center of the frame. The camera trucks right with small amplitude at slow speed as <Subject 1> turns toward the light and looks off-screen.\n\noverall_soundscape:\nSteady interior room tone continues throughout, with soft footsteps and fabric movement as <Subject 1> crosses the frame.\n\nnon_diegetic_music:\nN/A",
+        "integrated_multimodal_description: [Shot 1] Live-action, cinematic, handheld, shallow depth of field. A medium shot frames a courier in a soaked red jacket standing over a bicycle at a city crosswalk in heavy evening rain, wet asphalt throwing back the signal lights, a brick facade with iron railings filling the background. The camera tracks right at medium amplitude and moderate speed as she snaps her helmet strap and pushes off.\n[Shot 2] At 00:04.000, the shot cuts to a low tracking shot running alongside the bicycle as it crosses the junction, spray coming off the tyres, painted lane markings streaming past underneath.\n[Shot 3] At 00:08.000, the camera whip pans up to a wide shot of the street as she cuts between two parked cars, pigeons scattering off the railings, neon shopfront signs reflected in the puddles.\n[Shot 4] At 00:11.500, the shot changes to a close shot of her face under the helmet, rain streaking across the lens, as she glances back over her shoulder and then forward again, breathing hard.\n\noverall_soundscape: steady heavy rain on asphalt and metal, tyre hiss through standing water, the click and rattle of a bicycle chain, a car horn twice in the middle distance, wings clattering as the pigeons take off, her breathing close and rhythmic under the helmet.\n\nnon_diegetic_music: none.",
         1344,
         768,
-        362,
-        "match"
+        362
       ]
     },
     {
       "id": 9,
-      "type": "LoadImage",
-      "pos": [
-        -880,
-        640
-      ],
-      "size": [
-        290,
-        330
-      ],
-      "flags": {},
-      "order": 7,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "IMAGE",
-          "type": "IMAGE",
-          "links": [
-            6
-          ]
-        },
-        {
-          "name": "MASK",
-          "type": "MASK",
-          "links": null
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "LoadImage"
-      },
-      "widgets_values": [
-        "1-man.png",
-        "image"
-      ]
-    },
-    {
-      "id": 10,
-      "type": "LoadImage",
-      "pos": [
-        -880,
-        1010
-      ],
-      "size": [
-        290,
-        330
-      ],
-      "flags": {},
-      "order": 8,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "IMAGE",
-          "type": "IMAGE",
-          "links": [
-            7
-          ]
-        },
-        {
-          "name": "MASK",
-          "type": "MASK",
-          "links": null
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "LoadImage"
-      },
-      "widgets_values": [
-        "2-mountain_landscape.png",
-        "image"
-      ]
-    },
-    {
-      "id": 11,
       "type": "RandomNoise",
       "pos": [
         40,
@@ -458,7 +347,7 @@
         110
       ],
       "flags": {},
-      "order": 9,
+      "order": 8,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -466,7 +355,7 @@
           "name": "NOISE",
           "type": "NOISE",
           "links": [
-            13
+            10
           ]
         }
       ],
@@ -479,7 +368,7 @@
       ]
     },
     {
-      "id": 12,
+      "id": 10,
       "type": "KSamplerSelect",
       "pos": [
         40,
@@ -490,7 +379,7 @@
         60
       ],
       "flags": {},
-      "order": 10,
+      "order": 9,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -498,7 +387,7 @@
           "name": "SAMPLER",
           "type": "SAMPLER",
           "links": [
-            15
+            12
           ]
         }
       ],
@@ -510,7 +399,7 @@
       ]
     },
     {
-      "id": 13,
+      "id": 11,
       "type": "BasicScheduler",
       "pos": [
         40,
@@ -521,13 +410,13 @@
         130
       ],
       "flags": {},
-      "order": 11,
+      "order": 10,
       "mode": 0,
       "inputs": [
         {
           "name": "model",
           "type": "MODEL",
-          "link": 9
+          "link": 6
         }
       ],
       "outputs": [
@@ -535,7 +424,7 @@
           "name": "SIGMAS",
           "type": "SIGMAS",
           "links": [
-            16
+            13
           ]
         }
       ],
@@ -549,7 +438,7 @@
       ]
     },
     {
-      "id": 14,
+      "id": 12,
       "type": "BasicGuider",
       "pos": [
         40,
@@ -560,18 +449,18 @@
         70
       ],
       "flags": {},
-      "order": 15,
+      "order": 11,
       "mode": 0,
       "inputs": [
         {
           "name": "model",
           "type": "MODEL",
-          "link": 10
+          "link": 7
         },
         {
           "name": "conditioning",
           "type": "CONDITIONING",
-          "link": 11
+          "link": 8
         }
       ],
       "outputs": [
@@ -579,7 +468,7 @@
           "name": "GUIDER",
           "type": "GUIDER",
           "links": [
-            14
+            11
           ]
         }
       ],
@@ -588,7 +477,7 @@
       }
     },
     {
-      "id": 15,
+      "id": 13,
       "type": "SamplerCustomAdvanced",
       "pos": [
         400,
@@ -599,33 +488,33 @@
         150
       ],
       "flags": {},
-      "order": 16,
+      "order": 12,
       "mode": 0,
       "inputs": [
         {
           "name": "noise",
           "type": "NOISE",
-          "link": 13
+          "link": 10
         },
         {
           "name": "guider",
           "type": "GUIDER",
-          "link": 14
+          "link": 11
         },
         {
           "name": "sampler",
           "type": "SAMPLER",
-          "link": 15
+          "link": 12
         },
         {
           "name": "sigmas",
           "type": "SIGMAS",
-          "link": 16
+          "link": 13
         },
         {
           "name": "latent_image",
           "type": "LATENT",
-          "link": 12
+          "link": 9
         }
       ],
       "outputs": [
@@ -633,8 +522,8 @@
           "name": "output",
           "type": "LATENT",
           "links": [
-            17,
-            19
+            14,
+            16
           ]
         },
         {
@@ -648,7 +537,7 @@
       }
     },
     {
-      "id": 16,
+      "id": 14,
       "type": "VAEDecode",
       "pos": [
         780,
@@ -659,18 +548,18 @@
         60
       ],
       "flags": {},
-      "order": 17,
+      "order": 13,
       "mode": 0,
       "inputs": [
         {
           "name": "samples",
           "type": "LATENT",
-          "link": 17
+          "link": 14
         },
         {
           "name": "vae",
           "type": "VAE",
-          "link": 18
+          "link": 15
         }
       ],
       "outputs": [
@@ -678,7 +567,7 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            21
+            18
           ]
         }
       ],
@@ -687,7 +576,7 @@
       }
     },
     {
-      "id": 17,
+      "id": 15,
       "type": "VAEDecodeAudio",
       "pos": [
         780,
@@ -698,18 +587,18 @@
         60
       ],
       "flags": {},
-      "order": 18,
+      "order": 14,
       "mode": 0,
       "inputs": [
         {
           "name": "samples",
           "type": "LATENT",
-          "link": 19
+          "link": 16
         },
         {
           "name": "vae",
           "type": "VAE",
-          "link": 20
+          "link": 17
         }
       ],
       "outputs": [
@@ -717,7 +606,7 @@
           "name": "AUDIO",
           "type": "AUDIO",
           "links": [
-            22
+            19
           ]
         }
       ],
@@ -726,7 +615,7 @@
       }
     },
     {
-      "id": 18,
+      "id": 16,
       "type": "CreateVideo",
       "pos": [
         1080,
@@ -737,18 +626,18 @@
         110
       ],
       "flags": {},
-      "order": 19,
+      "order": 15,
       "mode": 0,
       "inputs": [
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 21
+          "link": 18
         },
         {
           "name": "audio",
           "type": "AUDIO",
-          "link": 22,
+          "link": 19,
           "shape": 7
         }
       ],
@@ -757,7 +646,7 @@
           "name": "VIDEO",
           "type": "VIDEO",
           "links": [
-            23
+            20
           ]
         }
       ],
@@ -770,7 +659,7 @@
       ]
     },
     {
-      "id": 19,
+      "id": 17,
       "type": "SaveVideo",
       "pos": [
         1080,
@@ -781,13 +670,13 @@
         400
       ],
       "flags": {},
-      "order": 20,
+      "order": 16,
       "mode": 0,
       "inputs": [
         {
           "name": "video",
           "type": "VIDEO",
-          "link": 23
+          "link": 20
         }
       ],
       "outputs": [
@@ -801,58 +690,10 @@
         "Node name for S&R": "SaveVideo"
       },
       "widgets_values": [
-        "video/h3_r2v_sage",
+        "video/h3_t2v_sage",
         "auto",
         "auto"
       ]
-    },
-    {
-      "id": 20,
-      "type": "MarkdownNote",
-      "pos": [
-        -2180,
-        0
-      ],
-      "size": [
-        620,
-        620
-      ],
-      "flags": {},
-      "order": 12,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "MarkdownNote"
-      },
-      "widgets_values": [
-        "## Canvas and length are not free parameters\n\n`adapt_canvas()` ignores your pixel budget. Short edge **768**, hard area\ncap **768x1344 = 1,032,192 px**, each axis rounded to **32**. There is no\nhigher resolution to pick -- asking for 4K gives the same canvas as 720p.\n\nSo resolution is an **aspect-ratio choice**, and it is the single biggest\nspeed lever anywhere, because attention is O(S^2) and dominates the step.\n\n| aspect | canvas | attention |\n|---|---|---|\n| 21:9 / 16:9 / 9:16 | 1536x672 / 1344x768 / 768x1344 | 1.00x |\n| 3:2 / 2:3 | 1152x768 / 768x1152 | 0.73x |\n| 4:3 / 3:4 | 1024x768 / 768x1024 | 0.58x |\n| 5:4 / 4:5 | 960x768 / 768x960 | 0.51x |\n| **1:1** | **768x768** | **0.33x** |\n\n**Portrait and landscape of a ratio cost the same.** Packed rows are\n`(h//32)*(w//32)`, which is symmetric. 16:9 vs 9:16 is a quality question,\nnever a speed one.\n\n## Length snaps up to n % 17 == 5\n\nAsk 200, get 209. Ask 300, get 311. Near the top: **311, 328, 345, 362**.\nTrained range is ~124-362 per the node's own tooltip; 362 = 15.08s at 24fps.\n\nAt 362 frames attention is ~76% of the step, against ~50% at 124 -- long\nclips are where sparsity and kernel work pay off most. But 362 is the edge\nof the trained range, and late-clip softening there is ordinary DiT decay.\n**328 or 345 costs less attention and drifts less.**\n\nCore ComfyUI's `ResolutionSelector` works from a megapixel target, which is\nnot how any of this works. Type the numbers.\n"
-      ],
-      "title": "Canvas + length: what is actually selectable"
-    },
-    {
-      "id": 21,
-      "type": "MarkdownNote",
-      "pos": [
-        -2180,
-        660
-      ],
-      "size": [
-        620,
-        560
-      ],
-      "flags": {},
-      "order": 13,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "MarkdownNote"
-      },
-      "widgets_values": [
-        "## Node order is load-bearing\n\n```\nLoad Diffusion Model\n  -> MiniMax H3 SageAttention     (this repo)\n  -> SolAttnPatch                 (must be AFTER)\n  -> BasicScheduler + BasicGuider (MODEL forks to BOTH)\n```\n\n**Sol-Attn must come second.** It composes with the attention patch it\nfinds; reversed, it overwrites ours and you silently get sage only, with no\nerror and no log line saying so.\n\n**MODEL forks to two consumers.** Rewiring only the guider leaves the\nscheduler reading sigmas off the unpatched model, and the render still\nsucceeds -- which is why that mistake survives.\n\n## Check it is actually running, once per graph change\n\nTurn `verbose` on in SolAttnPatch for one render, then off. You want three\nlines. **Read them in the terminal** -- piping or redirecting block-buffers\nthe output and they may not appear even when everything is fine.\n\n```\nsage routing: arch=sm89 ... pv_accum=fp32+fp16 -> fp8_cuda++\n[sol_attn] chaining onto an existing attention override\n[sol_attn] sparse (1, ..., 56, 128) tau=2.0 int8 pointer\n```\n\nLine 1: sage engaged on the fast kernel. Line 3: sparse engaged at your tau.\n**Line 2 is the order check** -- it only prints when Sol-Attn finds sage's\noverride already installed. Missing means the nodes are backwards and you\nare paying full price for a render that otherwise looks fine.\n\n## What each node is here for\n\n- **ModelPreviewOverrideKJ** -- taeh3 preview, and it is arguably the\n  largest optimization here rather than a convenience. Killing a bad seed at\n  90s instead of 11 minutes saves ~9.5 min; the entire kernel and sparsity\n  stack saves ~7 min per render. If one render in three is a bad seed the\n  preview beats everything else combined -- and they compound rather than\n  compete.\n- **MiniMax H3 SageAttention** -- INT8-QK / FP8-PV kernel on all 50 DiT\n  attention forwards, plus an `optimized_attention_override` registration.\n  That second part is what lets Sol-Attn compose instead of bypassing sage.\n- **SolAttnPatch** -- block-sparse attention. Settings are pinned from\n  `workflows/h3_config.py`; edit there and regenerate, not here.\n\n## Deliberately absent\n\n- **MiniMaxH3MemoryEfficientSageAttentionPatch** (KJNodes) -- same job as\n  our node, patches the same key, so they conflict. Ours also registers the\n  override.\n- **MiniMaxLowVRAMAttention** -- head chunking. ~1070 MiB saved, but 1000\n  attention calls become 4000. On 24GB freed VRAM converts to wall-clock at\n  a ~2.6% ceiling. Take it only if you are actually hitting OOM.\n- **MiniMaxChunkFeedForward** -- at 362 frames attention peaks ~17.8 GiB\n  against FFN's 9-12, so it chunks a peak that is not binding. Short-clip\n  feature.\n- **PathchSageAttentionKJ** -- global no-guard sage switch. Prefer the\n  per-workflow node.\n"
-      ],
-      "title": "Which nodes, and the order that matters"
     }
   ],
   "links": [
@@ -890,30 +731,6 @@
     ],
     [
       5,
-      4,
-      0,
-      8,
-      2,
-      "VAE"
-    ],
-    [
-      6,
-      9,
-      0,
-      8,
-      3,
-      "IMAGE"
-    ],
-    [
-      7,
-      10,
-      0,
-      8,
-      4,
-      "IMAGE"
-    ],
-    [
-      8,
       2,
       0,
       8,
@@ -921,122 +738,122 @@
       "CLIP"
     ],
     [
-      9,
+      6,
       7,
       0,
-      13,
-      0,
-      "MODEL"
-    ],
-    [
-      10,
-      7,
-      0,
-      14,
-      0,
-      "MODEL"
-    ],
-    [
       11,
+      0,
+      "MODEL"
+    ],
+    [
+      7,
+      7,
+      0,
+      12,
+      0,
+      "MODEL"
+    ],
+    [
+      8,
       8,
       0,
-      14,
+      12,
       1,
       "CONDITIONING"
     ],
     [
-      12,
+      9,
       8,
       1,
-      15,
+      13,
       4,
       "LATENT"
+    ],
+    [
+      10,
+      9,
+      0,
+      13,
+      0,
+      "NOISE"
+    ],
+    [
+      11,
+      12,
+      0,
+      13,
+      1,
+      "GUIDER"
+    ],
+    [
+      12,
+      10,
+      0,
+      13,
+      2,
+      "SAMPLER"
     ],
     [
       13,
       11,
       0,
-      15,
-      0,
-      "NOISE"
+      13,
+      3,
+      "SIGMAS"
     ],
     [
       14,
+      13,
+      0,
       14,
       0,
+      "LATENT"
+    ],
+    [
       15,
+      3,
+      0,
+      14,
       1,
-      "GUIDER"
-    ],
-    [
-      15,
-      12,
-      0,
-      15,
-      2,
-      "SAMPLER"
+      "VAE"
     ],
     [
       16,
       13,
       0,
       15,
-      3,
-      "SIGMAS"
-    ],
-    [
-      17,
-      15,
-      0,
-      16,
       0,
       "LATENT"
     ],
     [
-      18,
-      3,
-      0,
-      16,
-      1,
-      "VAE"
-    ],
-    [
-      19,
-      15,
-      0,
       17,
-      0,
-      "LATENT"
-    ],
-    [
-      20,
       4,
       0,
-      17,
+      15,
       1,
       "VAE"
     ],
     [
-      21,
-      16,
-      0,
       18,
+      14,
+      0,
+      16,
       0,
       "IMAGE"
     ],
     [
-      22,
-      17,
+      19,
+      15,
       0,
-      18,
+      16,
       1,
       "AUDIO"
     ],
     [
-      23,
-      18,
+      20,
+      16,
       0,
-      19,
+      17,
       0,
       "VIDEO"
     ]

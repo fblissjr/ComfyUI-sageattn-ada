@@ -311,6 +311,111 @@ def _out(name, type_):
     return {"name": name, "type": type_, "links": None}
 
 
+# Text for the in-graph notes. Kept next to the builder rather than in
+# docs/h3_geometry_and_nodes.md on purpose: that doc is the long form, this
+# is what you need with the graph open. Numbers here come from
+# comfy_extras/nodes_minimax_h3.py, not from lore.
+_NOTE_GEOMETRY = """\
+## Canvas and length are not free parameters
+
+`adapt_canvas()` ignores your pixel budget. Short edge **768**, hard area
+cap **768x1344 = 1,032,192 px**, each axis rounded to **32**. There is no
+higher resolution to pick -- asking for 4K gives the same canvas as 720p.
+
+So resolution is an **aspect-ratio choice**, and it is the single biggest
+speed lever anywhere, because attention is O(S^2) and dominates the step.
+
+| aspect | canvas | attention |
+|---|---|---|
+| 21:9 / 16:9 / 9:16 | 1536x672 / 1344x768 / 768x1344 | 1.00x |
+| 3:2 / 2:3 | 1152x768 / 768x1152 | 0.73x |
+| 4:3 / 3:4 | 1024x768 / 768x1024 | 0.58x |
+| 5:4 / 4:5 | 960x768 / 768x960 | 0.51x |
+| **1:1** | **768x768** | **0.33x** |
+
+**Portrait and landscape of a ratio cost the same.** Packed rows are
+`(h//32)*(w//32)`, which is symmetric. 16:9 vs 9:16 is a quality question,
+never a speed one.
+
+## Length snaps up to n % 17 == 5
+
+Ask 200, get 209. Ask 300, get 311. Near the top: **311, 328, 345, 362**.
+Trained range is ~124-362 per the node's own tooltip; 362 = 15.08s at 24fps.
+
+At 362 frames attention is ~76% of the step, against ~50% at 124 -- long
+clips are where sparsity and kernel work pay off most. But 362 is the edge
+of the trained range, and late-clip softening there is ordinary DiT decay.
+**328 or 345 costs less attention and drifts less.**
+
+Core ComfyUI's `ResolutionSelector` works from a megapixel target, which is
+not how any of this works. Type the numbers.
+"""
+
+_NOTE_NODES = """\
+## Node order is load-bearing
+
+```
+Load Diffusion Model
+  -> MiniMax H3 SageAttention     (this repo)
+  -> SolAttnPatch                 (must be AFTER)
+  -> BasicScheduler + BasicGuider (MODEL forks to BOTH)
+```
+
+**Sol-Attn must come second.** It composes with the attention patch it
+finds; reversed, it overwrites ours and you silently get sage only, with no
+error and no log line saying so.
+
+**MODEL forks to two consumers.** Rewiring only the guider leaves the
+scheduler reading sigmas off the unpatched model, and the render still
+succeeds -- which is why that mistake survives.
+
+## Check it is actually running, once per graph change
+
+Turn `verbose` on in SolAttnPatch for one render, then off. You want three
+lines. **Read them in the terminal** -- piping or redirecting block-buffers
+the output and they may not appear even when everything is fine.
+
+```
+sage routing: arch=sm89 ... pv_accum=fp32+fp16 -> fp8_cuda++
+[sol_attn] chaining onto an existing attention override
+[sol_attn] sparse (1, ..., 56, 128) tau=2.0 int8 pointer
+```
+
+Line 1: sage engaged on the fast kernel. Line 3: sparse engaged at your tau.
+**Line 2 is the order check** -- it only prints when Sol-Attn finds sage's
+override already installed. Missing means the nodes are backwards and you
+are paying full price for a render that otherwise looks fine.
+
+## What each node is here for
+
+- **ModelPreviewOverrideKJ** -- taeh3 preview, and it is arguably the
+  largest optimization here rather than a convenience. Killing a bad seed at
+  90s instead of 11 minutes saves ~9.5 min; the entire kernel and sparsity
+  stack saves ~7 min per render. If one render in three is a bad seed the
+  preview beats everything else combined -- and they compound rather than
+  compete.
+- **MiniMax H3 SageAttention** -- INT8-QK / FP8-PV kernel on all 50 DiT
+  attention forwards, plus an `optimized_attention_override` registration.
+  That second part is what lets Sol-Attn compose instead of bypassing sage.
+- **SolAttnPatch** -- block-sparse attention. Settings are pinned from
+  `workflows/h3_config.py`; edit there and regenerate, not here.
+
+## Deliberately absent
+
+- **MiniMaxH3MemoryEfficientSageAttentionPatch** (KJNodes) -- same job as
+  our node, patches the same key, so they conflict. Ours also registers the
+  override.
+- **MiniMaxLowVRAMAttention** -- head chunking. ~1070 MiB saved, but 1000
+  attention calls become 4000. On 24GB freed VRAM converts to wall-clock at
+  a ~2.6% ceiling. Take it only if you are actually hitting OOM.
+- **MiniMaxChunkFeedForward** -- at 362 frames attention peaks ~17.8 GiB
+  against FFN's 9-12, so it chunks a peak that is not binding. Short-clip
+  feature.
+- **PathchSageAttentionKJ** -- global no-guard sage switch. Prefer the
+  per-workflow node.
+"""
+
+
 def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
              length: int = LENGTH, seed: int = SEED, preview: bool = False,
              sol: dict | None = None, sol_enabled: bool = True,
@@ -481,6 +586,14 @@ def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
     g.link(adec, 0, mux, "audio", "AUDIO")
     g.link(mux, 0, save, "video", "VIDEO")
 
+    # Guidance in the graph rather than in a doc nobody opens next to it.
+    # MarkdownNote is in _UI_ONLY, so these never reach the API form and
+    # cannot desync it.
+    g.add("MarkdownNote", (-2180, 0), size=(620, 620), widgets=[_NOTE_GEOMETRY],
+          title="Canvas + length: what is actually selectable")
+    g.add("MarkdownNote", (-2180, 660), size=(620, 560), widgets=[_NOTE_NODES],
+          title="Which nodes, and the order that matters")
+
     return g.dump(f"h3-{task}-sage")
 
 
@@ -616,6 +729,11 @@ def validate_ui(wf: dict, oi: dict, label: str) -> list[str]:
         elif d["inputs"][ds].get("link") != lid:
             e(f"link {lid}: not recorded on {d['type']} input {ds}")
     for n in wf["nodes"]:
+        # Frontend-only nodes have no backend class, so they are absent from
+        # /object_info by design. Rejecting them would be the validator being
+        # confidently wrong rather than the graph being broken.
+        if n["type"] in _FRONTEND_ONLY:
+            continue
         if n["type"] not in oi:
             e(f"node {n['id']}: unknown type {n['type']!r}")
             continue
@@ -653,6 +771,11 @@ def validate_ui(wf: dict, oi: dict, label: str) -> list[str]:
 # watch and nowhere near the graph you measure.
 _UI_ONLY = {"MarkdownNote", "Note", "Reroute", "PrimitiveNode",
             "ModelPreviewOverrideKJ"}
+
+# Rendered entirely by the frontend, so they have no entry in /object_info.
+# Subset of _UI_ONLY: ModelPreviewOverrideKJ is a real backend node that we
+# exclude from the API form by choice, not by necessity.
+_FRONTEND_ONLY = {"MarkdownNote", "Note", "Reroute", "PrimitiveNode"}
 
 
 def _ui_settings(wf):
