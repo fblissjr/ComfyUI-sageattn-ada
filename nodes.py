@@ -39,7 +39,7 @@ class MiniMaxH3SageAttention(io.ComfyNode):
         return io.Schema(
             node_id="MiniMaxH3SageAttention",
             display_name="MiniMax H3 SageAttention",
-            category="sageattn-ada",
+            category="model/attention/minimax",
             description=(
                 "Runs MiniMax H3's self-attention on SageAttention's sm89 "
                 "INT8/FP8 kernel instead of torch attention. Connect between "
@@ -121,18 +121,18 @@ class MiniMaxH3SageAttention(io.ComfyNode):
         )
 
         logger.info(
-            "[sageattn-ada] MiniMax H3 self-attention on sage (mode=%s, "
+            "[h3] MiniMax H3 self-attention on sage (mode=%s, "
             "%d attention modules patched, sage registered as the "
             "attention-override fallback)", mode, len(targets),
         )
         return io.NodeOutput(m)
 
 
-class SageAttnAdaExtension(ComfyExtension):
+class H3ExplorationsExtension(ComfyExtension):
     async def get_node_list(self):
         return [MiniMaxH3SageAttention, SageChainAssert, MiniMaxH3KeyframeCanvas,
                 MiniMaxH3ProvenanceStamp]
 
 
-async def comfy_entrypoint() -> SageAttnAdaExtension:
-    return SageAttnAdaExtension()
+async def comfy_entrypoint() -> H3ExplorationsExtension:
+    return H3ExplorationsExtension()

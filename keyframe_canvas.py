@@ -78,7 +78,7 @@ class MiniMaxH3KeyframeCanvas(io.ComfyNode):
             # the H3 node takes [:1] silently; say so rather than let a batch
             # look like it was used
             logger.warning(
-                "[sageattn-ada] first_frame carries %d images; MiniMax H3 uses only "
+                "[h3] first_frame carries %d images; MiniMax H3 uses only "
                 "the first. Batch the prompt instead if you meant several renders.",
                 first_frame.shape[0],
             )
@@ -103,7 +103,7 @@ class MiniMaxH3KeyframeCanvas(io.ComfyNode):
                 # A size the DiT cannot patch would fail downstream with a
                 # shape error that says nothing about where it came from.
                 logger.warning(
-                    "[sageattn-ada] canvas %dx%d is not a multiple of 32; "
+                    "[h3] canvas %dx%d is not a multiple of 32; "
                     "snapped to %dx%d. The H3 latent cannot grid the original.",
                     width, height, snapped_w, snapped_h,
                 )
@@ -128,7 +128,7 @@ class MiniMaxH3KeyframeCanvas(io.ComfyNode):
         attn_cost = round((tokens / cheapest) ** 2, 3)
 
         logger.info(
-            "[sageattn-ada] H3 canvas %dx%d (%s) from a %dx%d keyframe: "
+            "[h3] H3 canvas %dx%d (%s) from a %dx%d keyframe: "
             "aspect %.4f -> %.4f, attention ~%.2fx a 768x768 canvas",
             width, height, mode, src_w, src_h,
             src_w / src_h, width / height, attn_cost,

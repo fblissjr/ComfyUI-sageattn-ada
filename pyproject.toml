@@ -1,9 +1,9 @@
 [project]
-name = "comfyui-sageattn-ada"
-description = "SageAttention kernels for consumer video DiTs on Ada (RTX 40xx / sm89). MiniMax H3 self-attention today."
+name = "comfyui-h3-explorations"
+description = "Tinkering and research hub for the MiniMax H3 ecosystem in ComfyUI: SageAttention kernels, keyframe/provenance nodes, benchmarks, and workflows."
 version = "0.1.0"
 requires-python = ">=3.10"
 
 [tool.comfy]
-DisplayName = "SageAttention Ada"
+DisplayName = "MiniMax H3 Explorations"
 PublisherId = "fbliss"

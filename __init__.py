@@ -1,6 +1,7 @@
-"""ComfyUI-sageattn-ada: SageAttention kernels for consumer video DiTs on Ada.
+"""ComfyUI-h3-explorations: tinkering and research hub for the MiniMax H3 ecosystem.
 
-Currently ships one node, for MiniMax H3. See README.md.
+Ships the MiniMax H3 SageAttention node plus supporting keyframe, provenance,
+and chain-assert nodes. See README.md.
 """
 
 from .nodes import comfy_entrypoint

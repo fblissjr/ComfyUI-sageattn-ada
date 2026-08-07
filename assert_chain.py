@@ -51,7 +51,7 @@ class SageChainAssert(io.ComfyNode):
         return io.Schema(
             node_id="SageChainAssert",
             display_name="Assert Sage Attention Chain",
-            category="sageattn-ada",
+            category="model/attention/minimax",
             description=(
                 "Raises if the attention chain is not composed as intended, "
                 "instead of letting a silently-bypassed patch render "
@@ -191,9 +191,9 @@ class SageChainAssert(io.ComfyNode):
         if exercise and override is not None:
             ok, detail = cls._exercise(override, to)
             if ok is None:
-                logger.warning("[sageattn-ada] chain assert: %s", detail)
+                logger.warning("[h3] chain assert: %s", detail)
             elif ok:
-                logger.info("[sageattn-ada] chain assert, call-time: %s", detail)
+                logger.info("[h3] chain assert, call-time: %s", detail)
             else:
                 problems.append(detail)
 
@@ -210,7 +210,7 @@ class SageChainAssert(io.ComfyNode):
                 raise RuntimeError(msg)
         else:
             logger.info(
-                "[sageattn-ada] chain assert ok: override installed, "
+                "[h3] chain assert ok: override installed, "
                 "%d attention forward patch(es) present", len(attn_forwards))
 
         return io.NodeOutput(model)

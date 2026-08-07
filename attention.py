@@ -37,7 +37,7 @@ def _log_fallback_once(exc):
     if not _FALLBACK_LOGGED:
         _FALLBACK_LOGGED = True
         logger.warning(
-            "[sageattn-ada] sage kernel raised (%s: %s); this block and any "
+            "[h3] sage kernel raised (%s: %s); this block and any "
             "later failure fall back to ComfyUI's attention for the rest of "
             "the run. The render continues, just without sage.",
             type(exc).__name__, exc,

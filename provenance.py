@@ -197,7 +197,7 @@ class MiniMaxH3ProvenanceStamp(io.ComfyNode):
             "note": note,
             "sol": sol,
             "builds": {
-                "sageattn_ada": _git_head(here),
+                "h3_explorations": _git_head(here),
                 "sol_attn": _git_head(packs / "ComfyUI-SolAttn_triton"),
                 "comfyui": _git_head(Path(folder_paths.base_path)),
                 "sageattention": cls._sage_version(),
@@ -237,7 +237,7 @@ class MiniMaxH3ProvenanceStamp(io.ComfyNode):
             )
 
         logger.info(
-            "[sageattn-ada] provenance -> %s (sol=%s, n_sparse=%s)",
+            "[h3] provenance -> %s (sol=%s, n_sparse=%s)",
             path.name, sol["state"], sol.get("n_sparse", "n/a"),
         )
         return io.NodeOutput(latent)
