@@ -12,6 +12,25 @@ never rendered; keep it structural rather than remembered.
 Nothing here is allowed to have a second copy anywhere in the repo.
 """
 
+# Kijai's extracted fl2va -> ref2va weight difference (Kijai/MiniMax-H3-experimental,
+# 2026-08-08). Rank 256 on the attention and MLP projections, rank 8 on the
+# adaln projections, plus full-rank `diff`/`diff_b` deltas on every norm and
+# bias -- a whole-model delta extraction, not a trained adapter. Coverage
+# matches the fl2va checkpoint exactly: verified against both safetensors
+# headers, and against comfy.lora.load_lora, which turns its 794 tensors into
+# 530 patches with zero unmatched keys. So at strength 1.0 it should
+# reconstruct ref2va, up to rank truncation and requantization error.
+#
+# That "should" is why `h3_image_ref_plus_text_to_video_ref_lora.json` exists
+# as a sibling of the shipped ref graph rather than as a claim: upstream's own
+# description is "completely experimental, I don't even know if it has a use
+# case at this point". Run the two and judge.
+#
+# The `h3/` prefix is load-bearing: LoRAs are foldered in this install and
+# ComfyUI's combo carries the subfolder in the value, so the bare filename is
+# rejected by /object_info validation.
+REF_LORA = "h3/minimax_h3_ref_lora_rank_256_bf16.safetensors"
+
 # Checkpoint names are the ones ComfyUI actually offers. The bundled
 # templates ask for `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors`, an NVFP4
 # text encoder that is not present in this install (and is a
@@ -179,3 +198,21 @@ ASPECTS = {
     "3x4":   (768, 1024),
     "1x1":   (768, 768),
 }
+
+# The strength the ref-LoRA graph ships at. 1.0 is the only value with a
+# defined meaning -- it is where the extracted delta is supposed to reconstruct
+# ref2va. Everything below it is an interpolation the LoRA was never fitted
+# for, which is the interesting part but not the default.
+#
+# Strength 0.0 and bypassing the node are the same thing, not two baselines.
+# `LoraLoader.load_lora` short-circuits when both strengths are zero (ComfyUI
+# nodes.py:729) and `LoraLoaderModelOnly` always passes strength_clip=0, so
+# either route hands back the untouched model and renders true plain fl2va.
+#
+# What neither gives you is a baseline that took the same path as the 1.0
+# arm. Applying the LoRA to a quantized checkpoint is a dequantize / add /
+# requantize round trip, and the zero-strength route skips it entirely -- so
+# part of any 1.0-against-0.0 difference is that round trip rather than the
+# delta. To see the round trip by itself, render 0.01: visually nil, but it
+# does not short-circuit, so it pays the full cost.
+REF_LORA_STRENGTH = 1.0

@@ -6,9 +6,10 @@ templates are not equally editable. `video_minimax_h3_r2v` is a flat graph,
 but t2v and i2v hide the entire sampler stack inside a subgraph named
 "Image to Video (MiniMax H3)". Editing a subgraph by hand -- or converting
 one to API format by hand -- is how you end up measuring a graph that is
-subtly not the one you meant to run. Building all three from one description
-keeps them identical everywhere they should be identical, and makes the one
-thing that differs (which conditioning node, which checkpoint) obvious.
+subtly not the one you meant to run. Building them all from one description
+keeps them identical everywhere they should be identical, and makes the
+things that differ (which conditioning node, which checkpoint, whether a LoRA
+is applied) obvious.
 
 The sage node goes between `UNETLoader` and the sampler stack. Note that
 MODEL forks to *two* consumers -- `BasicScheduler.model` and
@@ -33,6 +34,7 @@ import json
 import sys
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 
@@ -40,8 +42,8 @@ HERE = Path(__file__).resolve().parent
 # used to live here in duplicate with the bench. Single source is
 # h3_config.py -- see its docstring for why that matters.
 from h3_config import (  # noqa: E402
-    CANVAS, FPS, LENGTH, LONG_LENGTH, MODELS, SAMPLING,
-    SAGE_NODE, SEED, SOL_RECOMMENDED,
+    CANVAS, FPS, LENGTH, LONG_LENGTH, MODELS, REF_LORA, REF_LORA_STRENGTH,
+    SAMPLING, SAGE_NODE, SEED, SOL_RECOMMENDED,
 )
 
 # Prompt for the 362-frame presets. 15.08s at 24fps needs a shot timeline,
@@ -105,11 +107,18 @@ N/A"""
 def build_api(task: str, *, sage: bool = True, prompt: str | None = None,
               length: int = LENGTH, seed: int = SEED,
               sol: dict | None = None, canvas_mode: str = "fit_to_canvas",
-              stamp: bool = False, **canvas) -> dict:
+              stamp: bool = False, unet: str | None = None,
+              lora: tuple[str, float] | None = None,
+              out_prefix: str | None = None, **canvas) -> dict:
     """API-format graph, submittable as {"prompt": <this>} to POST /prompt.
 
     Node ids match `bench/bench_e2e_h3.py` so a timing run and a hand-edited
     graph can be compared node-for-node; "10" is the sampler in every graph.
+
+    `unet` overrides the checkpoint the task would otherwise pick. The two are
+    separable because the ref-LoRA probe needs r2v *conditioning* driven by the
+    *fl2va* checkpoint, which is not a combination any task name describes.
+    `lora` is (name, strength) and inserts a LoraLoaderModelOnly.
     """
     if task not in ("t2v", "i2v", "r2v"):
         raise ValueError(task)
@@ -120,7 +129,7 @@ def build_api(task: str, *, sage: bool = True, prompt: str | None = None,
 
     g = {
         "1": {"class_type": "UNETLoader",
-              "inputs": {"unet_name": MODELS["unet_ref2va" if ref else "unet_fl2va"],
+              "inputs": {"unet_name": unet or MODELS["unet_ref2va" if ref else "unet_fl2va"],
                          "weight_dtype": "default"}},
         "2": {"class_type": "CLIPLoader",
               "inputs": {"clip_name": MODELS["clip"], "type": "minimax",
@@ -146,7 +155,7 @@ def build_api(task: str, *, sage: bool = True, prompt: str | None = None,
                "inputs": {"images": ["11", 0], "fps": FPS, "audio": ["12", 0]}},
         "14": {"class_type": "SaveVideo",
                "inputs": {"video": ["13", 0],
-                          "filename_prefix": f"video/h3_{task}_sage",
+                          "filename_prefix": out_prefix or f"video/h3_{task}_sage",
                           "format": "auto", "codec": "auto"}},
     }
 
@@ -187,6 +196,20 @@ def build_api(task: str, *, sage: bool = True, prompt: str | None = None,
         g["5"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": inputs}
 
     model_src = ["1", 0]
+    if lora is not None:
+        # Before the attention patches, not after. Either order renders -- a
+        # LoRA patches weights and our node patches an attention function, so
+        # they touch different surfaces -- but applying the LoRA clones the
+        # ModelPatcher, and keeping that clone upstream of both attention
+        # nodes avoids inserting it between the two that have to compose.
+        # h3_config.CHAIN does not list this node and should not: it pins the
+        # sage-then-Sol order, which is the part that is load-bearing, and a
+        # LoRA in front of both is orthogonal to it.
+        # Node id 18; 20/21/22 are already spoken for.
+        g["18"] = {"class_type": "LoraLoaderModelOnly",
+                   "inputs": {"model": model_src, "lora_name": lora[0],
+                              "strength_model": lora[1]}}
+        model_src = ["18", 0]
     if sage:
         g["20"] = {"class_type": "MiniMaxH3SageAttention",
                    "inputs": {"model": model_src, **SAGE_NODE}}
@@ -440,11 +463,82 @@ are paying full price for a render that otherwise looks fine.
   per-workflow node.
 """
 
+# f-string, because the strength appears in the prose and the widget it
+# describes comes from REF_LORA_STRENGTH. Hardcoding it here is how a graph
+# ends up shipping a note that contradicts its own node.
+_NOTE_REF_LORA = f"""\
+# This graph, and what to compare it against
+
+This is `h3_image_ref_plus_text_to_video.json` with **one thing changed**:
+where that graph loads `ref2va`, this one loads `fl2va` and applies Kijai's
+extracted ref LoRA on top.
+
+Everything else is shared by construction -- same seed, same prompt, same
+canvas, same 362 frames, same 16 steps, same sage and Sol-Attn settings. Open
+both, point them at the same reference images, run them. Any difference you
+see is the LoRA.
+
+**Set your own reference images first.** The two `LoadImage` nodes hold
+whatever placeholders this install happened to have.
+
+## What the LoRA is
+
+The weight difference between `fl2va` and `ref2va`, extracted at rank 256
+(`Kijai/MiniMax-H3-experimental`, 2026-08-08). Not a trained adapter -- a
+whole-model delta, covering all 50 blocks, both token_refiner blocks, the
+patch projections, `condition_proj` and the final layer, with full-rank
+deltas on every norm and bias.
+
+At strength **1.0** it is meant to turn fl2va into ref2va. Upstream's own
+description is *"completely experimental, I don't even know if it has a use
+case at this point"*, so treat the shipped {REF_LORA_STRENGTH} as a starting
+point.
+
+Expect close, not identical, even when it works: rank 256 truncates the real
+delta, and on the int8_convrot checkpoint the merge is a dequantize / add /
+requantize round trip that loses a little more. A small gap is the expected
+outcome, not a broken graph.
+
+## Turning the strength dial
+
+Below 1.0 you are interpolating toward plain fl2va -- between first/last-frame
+keyframe conditioning and reference conditioning. That is the one thing two
+separate checkpoints cannot give you, and it is the reason to keep this graph
+around. Expect it to be ill-behaved before it is useful: the norm and bias
+deltas interpolate linearly, which is a crude stand-in for interpolating two
+models.
+
+**Strength 0.0 and ctrl-B bypass are the same thing.** ComfyUI short-circuits
+a LoRA whose strengths are all zero (`nodes.py:729`) and hands back the
+untouched model, so either route renders true plain fl2va. Use whichever you
+prefer -- just do not treat them as two different baselines.
+
+Neither pays what the 1.0 arm pays. Applying the LoRA to a quantized
+checkpoint is a dequantize / add / requantize round trip, and the
+zero-strength route skips it. So part of any 1.0-against-0.0 difference is
+that round trip, not the delta. To see the round trip on its own, render
+**0.01** -- visually nil, but it does not short-circuit.
+
+## One caveat if you are comparing carefully
+
+Sol-Attn is on here, same as the shipped graph, because the point is to
+compare like with like. But its window is a *percent* band that resolves
+against the model's own sigma curve, and the LoRA changes the model -- so the
+two graphs can end up running a different number of sparse steps. That is a
+second difference on top of the LoRA.
+
+It does not matter for "does this look right". It does matter if you are
+judging a subtle quality difference. Bypass `SolAttnPatch` in **both** graphs
+to remove it.
+"""
+
 
 def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
              length: int = LENGTH, seed: int = SEED, preview: bool = False,
              sol: dict | None = None, sol_enabled: bool = True,
              canvas_mode: str = "fit_to_canvas", stamp: bool = False,
+             unet: str | None = None, lora: tuple[str, float] | None = None,
+             out_prefix: str | None = None, title: str | None = None,
              **canvas) -> dict:
     ref = task == "r2v"
     cv = dict(CANVAS, **canvas)
@@ -452,9 +546,10 @@ def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
         "t2v": T2V_PROMPT, "i2v": I2V_PROMPT, "r2v": R2V_PROMPT}[task]
     g = UIGraph()
 
-    unet = g.add("UNETLoader", (-1500, 0), size=(560, 90),
-                 widgets=[MODELS["unet_ref2va" if ref else "unet_fl2va"], "default"],
-                 outputs=[_out("MODEL", "MODEL")])
+    unet_node = g.add("UNETLoader", (-1500, 0), size=(560, 90),
+                      widgets=[unet or MODELS["unet_ref2va" if ref else "unet_fl2va"],
+                               "default"],
+                      outputs=[_out("MODEL", "MODEL")])
     clip = g.add("CLIPLoader", (-1500, 140), size=(560, 110),
                  widgets=[MODELS["clip"], "minimax", "default"],
                  outputs=[_out("CLIP", "CLIP")])
@@ -465,7 +560,19 @@ def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
                  widgets=[MODELS["audio_vae"]], outputs=[_out("VAE", "VAE")],
                  title="Load VAE (audio)")
 
-    model_src = unet
+    model_src = unet_node
+    if lora is not None:
+        # Before the attention patches -- see the matching note in build_api.
+        # The strength widget is the one thing this graph exists to be swept,
+        # so the node gets a title that says what its arm is.
+        lora_node = g.add("LoraLoaderModelOnly", (-1500, 560), size=(560, 110),
+                          widgets=[lora[0], lora[1]],
+                          inputs=[_in("model", "MODEL")],
+                          outputs=[_out("MODEL", "MODEL")],
+                          title=f"Load LoRA (ref delta, strength {lora[1]})")
+        g.link(unet_node, 0, lora_node, "model", "MODEL")
+        model_src = lora_node
+
     sage_node = None
     if sage:
         sage_node = g.add("MiniMaxH3SageAttention", (-880, 0), size=(360, 110),
@@ -473,7 +580,7 @@ def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
                                    SAGE_NODE["patch_token_refiner"]],
                           inputs=[_in("model", "MODEL")],
                           outputs=[_out("MODEL", "MODEL")])
-        g.link(unet, 0, sage_node, "model", "MODEL")
+        g.link(model_src, 0, sage_node, "model", "MODEL")
         model_src = sage_node
 
     if sol is not None:
@@ -621,7 +728,7 @@ def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
                 inputs=[_in("images", "IMAGE"), _in("audio", "AUDIO", optional=True)],
                 outputs=[_out("VIDEO", "VIDEO")])
     save = g.add("SaveVideo", (1080, 170), size=(600, 400),
-                 widgets=[f"video/h3_{task}_sage", "auto", "auto"],
+                 widgets=[out_prefix or f"video/h3_{task}_sage", "auto", "auto"],
                  inputs=[_in("video", "VIDEO")], outputs=[_out("video", "VIDEO")])
 
     g.link(model_src, 0, sched, "model", "MODEL")
@@ -663,8 +770,11 @@ def build_ui(task: str, *, sage: bool = True, prompt: str | None = None,
           title="Canvas + length: what is actually selectable")
     g.add("MarkdownNote", (-2180, 660), size=(620, 560), widgets=[_NOTE_NODES],
           title="Which nodes, and the order that matters")
+    if lora is not None:
+        g.add("MarkdownNote", (-2180, 1280), size=(620, 620),
+              widgets=[_NOTE_REF_LORA], title="What this graph is probing")
 
-    return g.dump(f"h3-{task}-sage")
+    return g.dump(title or f"h3-{task}-sage")
 
 
 # --------------------------------------------------------------------------
@@ -890,22 +1000,36 @@ def cross_check(written):
         for n in sorted(only_api):
             errs.append(f"{task}: {n} in {api_name} but not {ui_name}")
 
-        # SolAttnPatch is the one whose settings have actually drifted, so
-        # check its values rather than only its presence. UI widgets are
-        # positional in schema order; API inputs are keyed.
-        if "SolAttnPatch" in ui_s and "SolAttnPatch" in api_s:
-            order = ["tau", "start_percent", "end_percent", "min_tokens",
-                     "int8_qk", "sink_conditioning", "morton", "morton_curve",
-                     "int8_pv", "verbose", "use_tma", "dense_blocks"]
-            widgets = ui_s["SolAttnPatch"] or []
+        # Nodes whose values are compared, not just their presence. UI widgets
+        # are positional in schema order; API inputs are keyed, so each entry
+        # is the schema order of the widgets we care about.
+        #
+        # SolAttnPatch is here because its settings have actually drifted.
+        # UNETLoader and LoraLoaderModelOnly joined it the moment `unet` and
+        # `lora` became free builder parameters: before that the checkpoint
+        # was derived from `task` inside both builders and the two formats
+        # could not disagree about it, and now they can. Which checkpoint a
+        # graph loads is exactly the class of difference this function exists
+        # to catch, and the node-set check above cannot see it -- both formats
+        # carry a UNETLoader either way.
+        for cls, order in (
+            ("SolAttnPatch",
+             ["tau", "start_percent", "end_percent", "min_tokens",
+              "int8_qk", "sink_conditioning", "morton", "morton_curve",
+              "int8_pv", "verbose", "use_tma", "dense_blocks"]),
+            ("UNETLoader", ["unet_name"]),
+            ("LoraLoaderModelOnly", ["lora_name", "strength_model"]),
+        ):
+            if cls not in ui_s or cls not in api_s:
+                continue
+            widgets = ui_s[cls] or []
             for i, key in enumerate(order):
-                if i >= len(widgets) or key not in api_s["SolAttnPatch"]:
+                if i >= len(widgets) or key not in api_s[cls]:
                     continue
-                if widgets[i] != api_s["SolAttnPatch"][key]:
+                if widgets[i] != api_s[cls][key]:
                     errs.append(
-                        f"{task}: SolAttnPatch.{key} is {widgets[i]!r} in "
-                        f"{ui_name} but {api_s['SolAttnPatch'][key]!r} in "
-                        f"{api_name}")
+                        f"{task}: {cls}.{key} is {widgets[i]!r} in "
+                        f"{ui_name} but {api_s[cls][key]!r} in {api_name}")
     return errs
 
 
@@ -923,39 +1047,52 @@ def main():
 
     written = []
 
-    # The two you actually open in ComfyUI. Named for what they do, not for
-    # the task abbreviation the code uses internally. Both carry the taeh3
+    # The ones you actually open in ComfyUI. Named for what they do, not for
+    # the task abbreviation the code uses internally. All carry the taeh3
     # preview, which is what lets a bad seed die at ~90s instead of costing a
     # full render -- worth more than any kernel knob when render time is the
     # objective.
-    for fname, task, prompt, note in (
-        ("h3_text_to_video.json", "t2v", LONG_T2V_PROMPT,
+    # `label` keys the UI/API cross-check and has to be unique; `task` is what
+    # the builder dispatches on. They were the same string until the ref-LoRA
+    # graph arrived, which is a second r2v graph with a different model source.
+    #
+    # `extra` is the whole difference between the shipped ref graph and its
+    # ref-LoRA sibling. Keeping it to one dict, on one line, next to the graph
+    # it modifies is the point: the two are meant to be compared, so anything
+    # that differs between them has to be visible in one place. Everything not
+    # in `extra` -- seed, prompt, canvas, length, sampler, sage, Sol -- is
+    # shared by construction and cannot drift apart.
+    GRAPHS: tuple[tuple[str, str, str, str | None, dict[str, Any], str], ...] = (
+        ("h3_text_to_video.json", "t2v", "t2v", LONG_T2V_PROMPT, {},
          "text -> video + audio"),
-        ("h3_image_ref_plus_text_to_video.json", "r2v", None,
+        ("h3_image_ref_plus_text_to_video.json", "r2v", "r2v", None, {},
          "reference image(s) + text -> video + audio"),
-        ("h3_first_frame_to_video.json", "i2v", None,
+        ("h3_first_frame_to_video.json", "i2v", "i2v", None, {},
          "first frame + text -> video + audio (via MiniMaxH3KeyframeCanvas)"),
-    ):
+        ("h3_image_ref_plus_text_to_video_ref_lora.json", "r2v-reflora", "r2v", None,
+         dict(unet=MODELS["unet_fl2va"], lora=(REF_LORA, REF_LORA_STRENGTH),
+              out_prefix="video/h3_r2v_fl2va_ref_lora"),
+         "same, but fl2va + the extracted ref LoRA instead of ref2va"),
+    )
+
+    for fname, label, task, prompt, extra, note in GRAPHS:
         wf = build_ui(task, sage=True, length=LONG_LENGTH, preview=True,
-                      sol=SOL_RECOMMENDED, sol_enabled=True, prompt=prompt)
+                      sol=SOL_RECOMMENDED, sol_enabled=True, prompt=prompt,
+                      title=f"h3-{label}-sage", **extra)
         p = out / fname
         p.write_text(json.dumps(wf, indent=2, ensure_ascii=False) + "\n")
-        written.append((task, "ui", p, wf))
+        written.append((label, "ui", p, wf))
         print(f"  {p.name}: {note}")
 
-    # API-format copies of the same two graphs, for driving a render over
-    # /prompt without a browser. Same builder inputs, so they cannot describe
-    # a different configuration than the pair above.
-    for fname, task, prompt in (
-        ("h3_text_to_video_api.json", "t2v", LONG_T2V_PROMPT),
-        ("h3_image_ref_plus_text_to_video_api.json", "r2v", None),
-        ("h3_first_frame_to_video_api.json", "i2v", None),
-    ):
+    # API-format copies of the same graphs, for driving a render over /prompt
+    # without a browser. Same builder inputs, so they cannot describe a
+    # different configuration than the set above.
+    for fname, label, task, prompt, extra, _note in GRAPHS:
         wf = build_api(task, sage=True, length=LONG_LENGTH,
-                       sol=SOL_RECOMMENDED, prompt=prompt)
-        p = out / fname
+                       sol=SOL_RECOMMENDED, prompt=prompt, **extra)
+        p = out / fname.replace(".json", "_api.json")
         p.write_text(json.dumps(wf, indent=2, ensure_ascii=False) + "\n")
-        written.append((task, "api", p, wf))
+        written.append((label, "api", p, wf))
 
     # Bench copies carrying MiniMaxH3ProvenanceStamp. Deliberately NOT the
     # shipped graphs: the stamp reads another pack's closure internals, so it

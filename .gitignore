@@ -5,3 +5,6 @@ __pycache__/
 internal/
 .claude/
 workflows/archive/
+# Local symlinks to sister repos checked out elsewhere on the machine. They
+# resolve only on the machine that made them, so they are never repo content.
+coderef/
