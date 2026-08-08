@@ -491,8 +491,8 @@ deltas on every norm and bias.
 
 At strength **1.0** it is meant to turn fl2va into ref2va. Upstream's own
 description is *"completely experimental, I don't even know if it has a use
-case at this point"*, so treat the shipped {REF_LORA_STRENGTH} as a starting
-point.
+case at this point"*, so treat the shipped {REF_LORA_STRENGTH} as a
+starting point, not a settled answer.
 
 Expect close, not identical, even when it works: rank 256 truncates the real
 delta, and on the int8_convrot checkpoint the merge is a dequantize / add /
