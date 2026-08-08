@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-h3-explorations"
 description = "Tinkering and research hub for the MiniMax H3 ecosystem in ComfyUI: SageAttention kernels, keyframe/provenance nodes, benchmarks, and workflows."
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.10"
 
 [tool.comfy]
